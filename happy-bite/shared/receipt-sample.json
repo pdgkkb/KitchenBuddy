@@ -1,0 +1,97 @@
+{
+ "store": "E.Leclerc",
+ "date": "2026-09-10",
+ "lines": [
+  {
+   "raw": "COURGETTE VRAC",
+   "qty": 780,
+   "price": 2.31,
+   "id": "courgette",
+   "confidence": 0.96
+  },
+  {
+   "raw": "STE MAURE TOUR 250G",
+   "qty": 250,
+   "price": 3.85,
+   "id": "goat",
+   "confidence": 0.81
+  },
+  {
+   "raw": "CRF LT DEMI ECR 1L",
+   "qty": 1,
+   "price": 1.09,
+   "id": "milk",
+   "confidence": 0.93
+  },
+  {
+   "raw": "OEUFS PL AIR X6",
+   "qty": 6,
+   "price": 2.49,
+   "id": "egg",
+   "confidence": 0.88
+  },
+  {
+   "raw": "BAS BLC POUL 2X125",
+   "qty": 250,
+   "price": 5.6,
+   "id": "chicken",
+   "confidence": 0.71
+  },
+  {
+   "raw": "EPIN BRAN SURG 750",
+   "qty": 750,
+   "price": 2.15,
+   "id": "spinach",
+   "confidence": 0.64
+  },
+  {
+   "raw": "TOM GRAPPE CAT1",
+   "qty": 620,
+   "price": 2.98,
+   "id": "tomato",
+   "confidence": 0.9
+  },
+  {
+   "raw": "H OLIVE VIERG EX 75CL",
+   "qty": 75,
+   "price": 7.45,
+   "id": "oliveoil",
+   "confidence": 0.85
+  },
+  {
+   "raw": "LESSIVE LIQ 30D",
+   "qty": 1,
+   "price": 8.99,
+   "id": null,
+   "confidence": 0
+  },
+  {
+   "raw": "PDT CHARL FIL 2K5",
+   "qty": 2500,
+   "price": 4.2,
+   "id": null,
+   "confidence": 0.42
+  },
+  {
+   "raw": "RAS EL HANOUT 35G",
+   "qty": 35,
+   "price": 2.1,
+   "id": null,
+   "confidence": 0.38
+  },
+  {
+   "raw": "SAC REUTILISABLE",
+   "qty": 1,
+   "price": 0.5,
+   "id": null,
+   "confidence": 0
+  },
+  {
+   "raw": "REMISE FIDELITE",
+   "qty": 1,
+   "price": -1.5,
+   "id": null,
+   "confidence": 0
+  }
+ ]
+}

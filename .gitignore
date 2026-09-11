@@ -1,0 +1,16 @@
+# Ignore macOS metadata
+.DS_Store
+
+# Ignore datasets and large data folders everywhere
+**/data/
+
+
+# Python cache & virtual environments
+**/__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# Environment files
+.env

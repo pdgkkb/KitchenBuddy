@@ -1,0 +1,540 @@
+{
+ "categories": [
+  {
+   "id": "produce",
+   "name": "Fruit & veg",
+   "tint": "var(--cat-produce)"
+  },
+  {
+   "id": "dairy",
+   "name": "Dairy & eggs",
+   "tint": "var(--cat-dairy)"
+  },
+  {
+   "id": "meat",
+   "name": "Meat",
+   "tint": "var(--cat-meat)"
+  },
+  {
+   "id": "seafood",
+   "name": "Fish",
+   "tint": "var(--cat-seafood)"
+  },
+  {
+   "id": "pantry",
+   "name": "Cupboard",
+   "tint": "var(--cat-pantry)"
+  },
+  {
+   "id": "seasoning",
+   "name": "Seasoning",
+   "tint": "var(--cat-seasoning)"
+  },
+  {
+   "id": "frozen",
+   "name": "Frozen",
+   "tint": "var(--cat-frozen)"
+  },
+  {
+   "id": "bakery",
+   "name": "Bakery",
+   "tint": "var(--cat-bakery)"
+  },
+  {
+   "id": "drinks",
+   "name": "Drinks",
+   "tint": "var(--cat-drinks)"
+  },
+  {
+   "id": "other",
+   "name": "Not food",
+   "tint": "var(--cat-other)"
+  }
+ ],
+ "ingredients": {
+  "courgette": {
+   "name": "Courgettes",
+   "category": "produce",
+   "unit": "g",
+   "shelfLife": 8,
+   "perPiece": 200
+  },
+  "tomato": {
+   "name": "Tomatoes",
+   "category": "produce",
+   "unit": "g",
+   "shelfLife": 6,
+   "perPiece": 110
+  },
+  "onion": {
+   "name": "Onions",
+   "category": "produce",
+   "unit": "u",
+   "shelfLife": 30,
+   "perPiece": 130
+  },
+  "garlic": {
+   "name": "Garlic",
+   "category": "produce",
+   "unit": "u",
+   "shelfLife": 60,
+   "perPiece": 60
+  },
+  "potato": {
+   "name": "Potatoes",
+   "category": "produce",
+   "unit": "g",
+   "shelfLife": 40,
+   "perPiece": 120
+  },
+  "lemon": {
+   "name": "Lemons",
+   "category": "produce",
+   "unit": "u",
+   "shelfLife": 20,
+   "perPiece": 110
+  },
+  "spinach": {
+   "name": "Spinach",
+   "category": "produce",
+   "unit": "g",
+   "shelfLife": 4
+  },
+  "carrot": {
+   "name": "Carrots",
+   "category": "produce",
+   "unit": "g",
+   "shelfLife": 21,
+   "perPiece": 90
+  },
+  "pepper": {
+   "name": "Bell peppers",
+   "category": "produce",
+   "unit": "u",
+   "shelfLife": 10,
+   "perPiece": 160
+  },
+  "banana": {
+   "name": "Bananas",
+   "category": "produce",
+   "unit": "u",
+   "shelfLife": 6,
+   "perPiece": 120
+  },
+  "avocado": {
+   "name": "Avocados",
+   "category": "produce",
+   "unit": "u",
+   "shelfLife": 5,
+   "perPiece": 200
+  },
+  "egg": {
+   "name": "Eggs",
+   "category": "dairy",
+   "unit": "u",
+   "shelfLife": 21,
+   "perPiece": 60
+  },
+  "milk": {
+   "name": "Semi-skimmed milk",
+   "category": "dairy",
+   "unit": "l",
+   "shelfLife": 9
+  },
+  "cream": {
+   "name": "Crème fraîche",
+   "category": "dairy",
+   "unit": "cl",
+   "shelfLife": 12
+  },
+  "goat": {
+   "name": "Goat's cheese",
+   "category": "dairy",
+   "unit": "g",
+   "shelfLife": 14,
+   "perPiece": 180
+  },
+  "parmesan": {
+   "name": "Parmesan",
+   "category": "dairy",
+   "unit": "g",
+   "shelfLife": 60
+  },
+  "butter": {
+   "name": "Butter",
+   "category": "dairy",
+   "unit": "g",
+   "shelfLife": 40
+  },
+  "yoghurt": {
+   "name": "Plain yoghurt",
+   "category": "dairy",
+   "unit": "g",
+   "shelfLife": 16
+  },
+  "chicken": {
+   "name": "Chicken breast",
+   "category": "meat",
+   "unit": "g",
+   "shelfLife": 3,
+   "perPiece": 125,
+   "doneness": [
+    "Just cooked",
+    "Well done"
+   ]
+  },
+  "beef": {
+   "name": "Beef steak",
+   "category": "meat",
+   "unit": "g",
+   "shelfLife": 3,
+   "perPiece": 180,
+   "doneness": [
+    "Blue",
+    "Rare",
+    "Medium rare",
+    "Medium",
+    "Well done"
+   ]
+  },
+  "pork": {
+   "name": "Pork belly",
+   "category": "meat",
+   "unit": "g",
+   "shelfLife": 4
+  },
+  "cod": {
+   "name": "Cod fillet",
+   "category": "seafood",
+   "unit": "g",
+   "shelfLife": 2,
+   "perPiece": 130,
+   "doneness": [
+    "Just flaking",
+    "Firm"
+   ]
+  },
+  "rice": {
+   "name": "Basmati rice",
+   "category": "pantry",
+   "unit": "g",
+   "shelfLife": 540
+  },
+  "pasta": {
+   "name": "Pasta",
+   "category": "pantry",
+   "unit": "g",
+   "shelfLife": 540,
+   "doneness": [
+    "Al dente",
+    "Soft"
+   ]
+  },
+  "flour": {
+   "name": "Flour",
+   "category": "pantry",
+   "unit": "g",
+   "shelfLife": 300
+  },
+  "oliveoil": {
+   "name": "Olive oil",
+   "category": "pantry",
+   "unit": "cl",
+   "shelfLife": 400
+  },
+  "chickpea": {
+   "name": "Chickpeas",
+   "category": "pantry",
+   "unit": "g",
+   "shelfLife": 720
+  },
+  "oats": {
+   "name": "Oats",
+   "category": "pantry",
+   "unit": "g",
+   "shelfLife": 300
+  },
+  "honey": {
+   "name": "Honey",
+   "category": "pantry",
+   "unit": "g",
+   "shelfLife": 900
+  },
+  "tahini": {
+   "name": "Tahini",
+   "category": "pantry",
+   "unit": "g",
+   "shelfLife": 300
+  },
+  "coconutmilk": {
+   "name": "Coconut milk",
+   "category": "pantry",
+   "unit": "ml",
+   "shelfLife": 540
+  },
+  "bread": {
+   "name": "Bread",
+   "category": "bakery",
+   "unit": "g",
+   "shelfLife": 3
+  },
+  "salt": {
+   "name": "Salt",
+   "category": "seasoning",
+   "unit": "g",
+   "shelfLife": 3000,
+   "origin": "Everywhere"
+  },
+  "blackpepper": {
+   "name": "Black pepper",
+   "category": "seasoning",
+   "unit": "g",
+   "shelfLife": 900,
+   "origin": "Everywhere"
+  },
+  "paprika": {
+   "name": "Smoked paprika",
+   "category": "seasoning",
+   "unit": "g",
+   "shelfLife": 720,
+   "origin": "Spain"
+  },
+  "cumin": {
+   "name": "Cumin",
+   "category": "seasoning",
+   "unit": "g",
+   "shelfLife": 720,
+   "origin": "Middle East"
+  },
+  "zaatar": {
+   "name": "Za'atar",
+   "category": "seasoning",
+   "unit": "g",
+   "shelfLife": 540,
+   "origin": "Levant"
+  },
+  "sumac": {
+   "name": "Sumac",
+   "category": "seasoning",
+   "unit": "g",
+   "shelfLife": 540,
+   "origin": "Levant"
+  },
+  "garammasala": {
+   "name": "Garam masala",
+   "category": "seasoning",
+   "unit": "g",
+   "shelfLife": 540,
+   "origin": "India"
+  },
+  "turmeric": {
+   "name": "Turmeric",
+   "category": "seasoning",
+   "unit": "g",
+   "shelfLife": 720,
+   "origin": "India"
+  },
+  "gochugaru": {
+   "name": "Gochugaru",
+   "category": "seasoning",
+   "unit": "g",
+   "shelfLife": 540,
+   "origin": "Korea"
+  },
+  "miso": {
+   "name": "Miso paste",
+   "category": "seasoning",
+   "unit": "g",
+   "shelfLife": 300,
+   "origin": "Japan"
+  },
+  "soy": {
+   "name": "Soy sauce",
+   "category": "seasoning",
+   "unit": "ml",
+   "shelfLife": 720,
+   "origin": "Japan"
+  },
+  "fishsauce": {
+   "name": "Fish sauce",
+   "category": "seasoning",
+   "unit": "ml",
+   "shelfLife": 720,
+   "origin": "Vietnam"
+  },
+  "harissa": {
+   "name": "Harissa",
+   "category": "seasoning",
+   "unit": "g",
+   "shelfLife": 300,
+   "origin": "Tunisia"
+  },
+  "ras": {
+   "name": "Ras el hanout",
+   "category": "seasoning",
+   "unit": "g",
+   "shelfLife": 540,
+   "origin": "Morocco"
+  },
+  "oregano": {
+   "name": "Oregano",
+   "category": "seasoning",
+   "unit": "g",
+   "shelfLife": 540,
+   "origin": "Greece"
+  },
+  "thyme": {
+   "name": "Thyme",
+   "category": "seasoning",
+   "unit": "g",
+   "shelfLife": 540,
+   "origin": "Provence"
+  },
+  "chilli": {
+   "name": "Chilli flakes",
+   "category": "seasoning",
+   "unit": "g",
+   "shelfLife": 720,
+   "origin": "Everywhere"
+  },
+  "cinnamon": {
+   "name": "Cinnamon",
+   "category": "seasoning",
+   "unit": "g",
+   "shelfLife": 720,
+   "origin": "Sri Lanka"
+  },
+  "ginger": {
+   "name": "Ginger",
+   "category": "seasoning",
+   "unit": "g",
+   "shelfLife": 21,
+   "origin": "East Asia"
+  },
+  "limejuice": {
+   "name": "Lime",
+   "category": "seasoning",
+   "unit": "u",
+   "shelfLife": 18,
+   "perPiece": 70,
+   "origin": "Mexico"
+  }
+ },
+ "startingStock": [
+  {
+   "id": "courgette",
+   "qty": 700,
+   "bought": -6
+  },
+  {
+   "id": "goat",
+   "qty": 180,
+   "bought": -9
+  },
+  {
+   "id": "cream",
+   "qty": 20,
+   "bought": -7
+  },
+  {
+   "id": "egg",
+   "qty": 6,
+   "bought": -4
+  },
+  {
+   "id": "milk",
+   "qty": 1,
+   "bought": -5
+  },
+  {
+   "id": "rice",
+   "qty": 900,
+   "bought": -30
+  },
+  {
+   "id": "onion",
+   "qty": 4,
+   "bought": -12
+  },
+  {
+   "id": "garlic",
+   "qty": 1,
+   "bought": -12
+  },
+  {
+   "id": "tomato",
+   "qty": 400,
+   "bought": -3
+  },
+  {
+   "id": "pasta",
+   "qty": 500,
+   "bought": -40
+  },
+  {
+   "id": "parmesan",
+   "qty": 120,
+   "bought": -20
+  },
+  {
+   "id": "potato",
+   "qty": 1500,
+   "bought": -14
+  },
+  {
+   "id": "oliveoil",
+   "qty": 50,
+   "bought": -60
+  },
+  {
+   "id": "flour",
+   "qty": 800,
+   "bought": -50
+  },
+  {
+   "id": "lemon",
+   "qty": 3,
+   "bought": -8
+  },
+  {
+   "id": "oats",
+   "qty": 500,
+   "bought": -20
+  },
+  {
+   "id": "yoghurt",
+   "qty": 400,
+   "bought": -5
+  },
+  {
+   "id": "banana",
+   "qty": 4,
+   "bought": -4
+  },
+  {
+   "id": "chickpea",
+   "qty": 400,
+   "bought": -60
+  },
+  {
+   "id": "salt",
+   "qty": 500,
+   "bought": -90
+  },
+  {
+   "id": "blackpepper",
+   "qty": 60,
+   "bought": -90
+  },
+  {
+   "id": "oregano",
+   "qty": 25,
+   "bought": -120
+  },
+  {
+   "id": "paprika",
+   "qty": 40,
+   "bought": -60
+  }
+ ]
+}

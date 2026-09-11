@@ -1,0 +1,12 @@
+# Supports NVIDIA CUDA QLoRA and Apple Silicon MPS LoRA. A 16 GB Mac should
+# use the 1.5B fallback; a 24 GB NVIDIA card can use Qwen2.5-7B.
+
+torch>=2.3
+transformers>=4.45            # Qwen2.5 is supported from 4.43+
+datasets>=2.19
+peft>=0.11
+trl>=0.9
+accelerate>=0.30
+bitsandbytes>=0.43            # only used on Linux + NVIDIA CUDA
+pandas>=2.0                   # reading the RecipeNLG CSV in chunks
+sentencepiece

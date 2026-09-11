@@ -1,0 +1,68 @@
+/* Happy Bite — design tokens.
+
+   A light reading of a dark health-dashboard look: the same mint score
+   rings, sky and peach companions, butter-to-mint gradient scales and
+   rounded tiles — on a cool mist ground instead of near-black. Pine ink
+   instead of black: softer at this size, and it belongs with the mint.
+   Coral stays reserved for one meaning only: this goes off soon.
+
+   The constraint that still drives everything: a tired person, standing,
+   two metres from the screen, maybe with wet hands. Body text never below
+   18px. Nothing tappable below 56px. */
+
+:root {
+  /* Ground and surfaces */
+  --ground:        #F3F7F6;
+  --surface:       #FFFFFF;
+  --surface-sunk:  #E8EFED;
+  --line:          #D8E3E0;
+  --ring-track:    #E2ECE9;
+
+  /* Ink */
+  --ink:           #12302A;
+  --ink-soft:      #526B65;
+  --ink-faint:     #8DA29C;
+
+  /* Accents */
+  --mint:          #34C99A;   /* primary action, progress, "ready" */
+  --mint-deep:     #0E7F5E;   /* text on light, focus rings */
+  --mint-wash:     #DDF5EC;
+  --sky:           #3AA7E0;   /* second ring, information */
+  --sky-wash:      #E1F1FA;
+  --peach:         #F4A259;   /* third ring, shopping */
+  --butter:        #F4E4B0;   /* the cool end of every scale */
+  --coral:         #EF5068;   /* goes off soon — never decoration */
+  --coral-wash:    #FDE7EA;
+
+  /* Category tints: distinguishable at a glance, never the only signal */
+  --cat-produce:   #4DBA6E;
+  --cat-dairy:     #3AA7E0;
+  --cat-meat:      #E0646C;
+  --cat-seafood:   #26ADA8;
+  --cat-pantry:    #C9A04A;
+  --cat-seasoning: #9C7BE0;
+  --cat-frozen:    #5B8DEB;
+  --cat-bakery:    #DD8D48;
+  --cat-drinks:    #7B8CA9;
+  --cat-other:     #98A6A2;
+
+  /* Type: Figtree, bundled with the app — a web font from a CDN would be
+     a silent network call, and this app opens with the cable pulled out. */
+  --face: "Figtree Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --t-display: 760 clamp(34px, 6.4vw, 54px)/1.04 var(--face);
+  --t-title:   720 32px/1.15 var(--face);
+  --t-lead:    600 23px/1.35 var(--face);
+  --t-body:    450 20px/1.45 var(--face);
+  --t-small:   550 18px/1.35 var(--face);
+  --t-tiny:    600 15px/1.2 var(--face);   /* chart labels only, never prose */
+
+  /* Rhythm and shape: radius follows hierarchy — big tiles are rounder */
+  --gap: 22px;
+  --nav-h: 84px;
+  --r-xl: 28px;
+  --r-lg: 22px;
+  --r-md: 16px;
+  --r-sm: 12px;
+  --lift: 0 1px 2px rgba(18, 48, 42, .05), 0 6px 20px rgba(18, 48, 42, .06);
+  --scale: linear-gradient(90deg, var(--butter), #BFEBCF 55%, var(--mint));
+}
