@@ -2,9 +2,10 @@
 .DS_Store
 
 # Ignore datasets and large data folders everywhere
-**/data/
-**/shared/
-**/media/
+happy-bite/training/data/
+happy-bite/shared/*.jsonl
+happy-bite/backend/media/
+*.sqlite3
 
 
 # Python cache & virtual environments
