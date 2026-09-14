@@ -60,6 +60,16 @@ class LocalSpeech:
             self._piper = PiperVoice.load(self.s.piper_voice, config_path=cfg)
         return self._piper
 
+    async def warmup(self) -> None:
+        """Keep startup cheap; Kokoro loads lazily on the first real reply.
+
+        Recent Torch/Kokoro combinations can materialize checkpoint layers on
+        meta tensors during eager startup. That warning is noisy and can leave
+        a half-loaded pipeline, while lazy loading on the actual speech path
+        is reliable and keeps server startup responsive.
+        """
+        return None
+
     # ---- hear ----
 
     async def hear(self, data: bytes, filename: str, mime: str) -> str:
@@ -75,7 +85,13 @@ class LocalSpeech:
     # ---- say ----
 
     async def say(self, text: str, voice: str | None = None) -> bytes:
-        return await asyncio.to_thread(self._say_sync, text[:2000], voice)
+        try:
+            return await asyncio.to_thread(self._say_sync, text[:2000], voice)
+        except NotImplementedError as exc:
+            # Some Torch/Kokoro combinations fail while materialising the
+            # checkpoint on meta tensors. The browser voice is the fallback;
+            # keep STT and the rest of the local voice service available.
+            raise RuntimeError("Local Kokoro TTS is unavailable; use browser speech.") from exc
 
     def _say_sync(self, text: str, voice: str | None) -> bytes:
         if self.s.tts_engine == "piper" and self.s.piper_voice:

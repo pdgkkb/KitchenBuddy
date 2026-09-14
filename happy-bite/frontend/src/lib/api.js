@@ -1,8 +1,8 @@
 /* Happy Bite — the server, from the browser's side.
 
    Every call here is optional. When the server is off, `status()` says so
-   and the interface falls back: local keyword matching, template recipes,
-   the browser's own voice. Nothing in the kitchen core imports this file. */
+  and the interface falls back for non-model features to the browser's own
+  voice. Nothing in the kitchen core imports this file. */
 
 const BASE = import.meta.env?.VITE_API_BASE || "";
 
@@ -42,10 +42,17 @@ export async function status() {
   } catch { return OFF; }
 }
 
-export const generateRecipe = (body) => post("/api/recipes/generate", body);
+export const generateRecipe = (body) => post("/api/recipes/generate", body, 120000);
 export const importLink = (body) => post("/api/recipes/import", body, 60000);
 export const understand = (text) => post("/api/understand", { text }, 20000);
 export const makeImage = (body) => post("/api/images", body, 120000);
+
+export const makeRecipeImages = (recipe) => post("/api/recipes/images", {
+  id: recipe.id, name: recipe.name, cuisine: recipe.cuisine,
+  description: recipe.description, count: 1
+});
+export const recipeImages = (id) => call(`/api/recipes/images/${encodeURIComponent(id)}`, {}, 10000).then(r => r.json());
+export const clearRecipeImages = (id) => call(`/api/recipes/images/${encodeURIComponent(id)}`, { method: "DELETE" }, 10000).then(r => r.json());
 
 export async function say(text) {
   const res = await call("/api/speech/say", {

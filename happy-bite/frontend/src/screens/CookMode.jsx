@@ -171,7 +171,9 @@ export default function CookMode() {
           <ol className="progress" aria-label={`Step ${i + 1} of ${total}`}>
             {recipe.steps.map((_, n) => (
               <li key={n}><button className={n < i ? "is-done" : n === i ? "is-now" : ""}
-                                  onClick={() => goStep(n)} aria-label={`Go to step ${n + 1}`} /></li>
+                                  onClick={() => goStep(n)} aria-label={`Go to step ${n + 1}`}>
+                {n === i && <span className="progress-emoji" aria-hidden="true">🍳</span>}
+              </button></li>
             ))}
           </ol>
         </div>
@@ -197,6 +199,11 @@ export default function CookMode() {
       )}
 
       <div className="cook-stage">
+        <div className="cook-recipe-summary">
+          <span>{recipe.name}</span>
+          <b>{recipe.minutes} min total</b>
+          <small>{recipe.complexity === 1 ? "Easy" : recipe.complexity === 3 ? "Involved" : "Some work"}</small>
+        </div>
         <button className="link cook-ing-toggle" onClick={() => setShowIngredients(!showIngredients)}>
           <Icon name="list" size={20} /> {showIngredients ? "Hide ingredients" : `Ingredients for ${serves}`}
         </button>
@@ -215,7 +222,10 @@ export default function CookMode() {
           </ul>
         )}
 
-        <p className="cook-stepno">Step {i + 1} of {total}</p>
+        <div className="cook-step-heading">
+          <p className="cook-stepno">Step {i + 1} of {total}</p>
+          <span className="cook-percent">{Math.round(((i + 1) / total) * 100)}% of the dish</span>
+        </div>
 
         {(step.heat || step.cue) && (
           <div className="kpts">
@@ -225,8 +235,11 @@ export default function CookMode() {
           </div>
         )}
 
-        <h2 className="cook-do">{step.do}</h2>
-        {step.why && <p className="cook-why">{step.why}</p>}
+        <div className="cook-keypoints">
+          <h2 className="cook-do">Do this</h2>
+          <ul>{keyPoints(step.do).map((point, n) => <li key={n}>{point}</li>)}</ul>
+          {step.why && <p className="cook-why">{step.why}</p>}
+        </div>
 
         {pictures[i] && <img className="cook-pic" src={pictures[i]} alt={`What “${step.do}” should look like`} />}
 
@@ -304,6 +317,10 @@ function stepBrief(s, idx, total, ask = true) {
   const cue = s.cue ? ` Look for ${s.cue.toLowerCase()}.` : "";
   const prompt = idx + 1 === total ? " And that's it — enjoy." : " Tell me when that's done.";
   return lead + body + cue + (ask ? prompt : "");
+}
+
+function keyPoints(text) {
+  return String(text || "").split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
 }
 
 function moodFor(cuisine) {

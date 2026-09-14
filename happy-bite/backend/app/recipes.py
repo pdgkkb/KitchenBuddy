@@ -71,6 +71,40 @@ RECIPE_SCHEMA = {
     "required": ["name", "minutes", "needs", "steps"],
 }
 
+RECIPE_OPTIONS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "recipes": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 3,
+            "items": RECIPE_SCHEMA,
+        }
+    },
+    "required": ["recipes"],
+}
+
+RECIPE_IDEAS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "recipes": {
+            "type": "array", "minItems": 2, "maxItems": 2,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "minutes": {"type": "integer"},
+                    "complexity": {"type": "integer", "enum": [1, 2, 3]},
+                    "cuisine": {"type": "string"},
+                },
+                "required": ["name", "description", "minutes", "complexity", "cuisine"],
+            },
+        }
+    },
+    "required": ["recipes"],
+}
+
 RULES = """Rules for the recipe:
 - Ingredient ids ONLY from the list, quantities in the unit shown beside each id.
   Anything with no id goes in "extras" as plain text. Never invent an id.

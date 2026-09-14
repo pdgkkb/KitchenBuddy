@@ -313,9 +313,10 @@ code { font-size: .9em; background: var(--surface-sunk); padding: 2px 6px; borde
                 padding-left: 10px; border-left: 3px solid var(--tint, var(--mint)); }
 
 .steps { list-style: none; margin: 0; padding: 0; }
-.step { display: flex; gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.step { display: flex; gap: 16px; padding: 18px 16px; margin: 10px 0; border: 1px solid var(--line); border-radius: var(--r-lg); background: rgba(255,255,255,.62); box-shadow: var(--lift); }
 .step-no { flex: none; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 50%;
            background: var(--mint-wash); color: var(--mint-deep); font-weight: 800; }
+.step-label { margin: 0 0 8px; font: var(--t-tiny); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); }
 .step-do { margin: 0 0 4px; }
 .step-why { margin: 0; font: var(--t-small); font-weight: 450; color: var(--ink-soft); }
 .step-heat { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0 0 8px; }

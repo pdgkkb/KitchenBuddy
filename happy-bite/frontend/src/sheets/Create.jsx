@@ -1,47 +1,98 @@
-/* New recipes: invented by the assistant, read from a link, or — with the
-   server off — assembled from a template and labelled as one. Nothing is
-   saved until a person has read it and named it. */
+/* New recipes are invented by the assistant or read from a link. Nothing is
+   saved until a person has read it and named it.
 
-import { useState } from "react";
+   The waiting states are the change here. A local Qwen takes ten to thirty
+   seconds to write a recipe; the panel used to respond to that by greying out
+   a button, which is indistinguishable from a crash. Now the panel is replaced
+   by a narration of the phases, and a failure leaves that narration on screen
+   so the error has somewhere to sit. */
+
+import { useEffect, useState } from "react";
 import * as E from "../core/engine.js";
 import * as api from "../lib/api.js";
-import { draftRecipe } from "../core/templates.js";
 import { useKitchen, stockForServer } from "../state/kitchen.jsx";
 import { useUI } from "../state/ui.jsx";
 import { DishImage } from "../components/Chrome.jsx";
 import { Icon } from "../components/Icon.jsx";
+import PhotoStrip from "../components/PhotoStrip.jsx";
+import Waiting, { RECIPE_STAGES, LINK_STAGES } from "../components/Waiting.jsx";
 import { RecipeView, PhotoButton } from "./RecipeSheet.jsx";
 
-export function CreateSheet() {
+export function CreateSheet({ options: initialOptions = null, autoGenerate = false, initialBrief = "" }) {
   const { k } = useKitchen();
   const ui = useUI();
-  const [brief, setBrief] = useState("");
+  const [brief, setBrief] = useState(initialBrief);
+  const [options, setOptions] = useState(initialOptions);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
   const on = ui.server.recipes;
   const soon = k.stock.filter(a => E.daysLeft(a) <= 3).map(a => E.ref(a.id).name.toLowerCase());
 
+  useEffect(() => {
+    if (autoGenerate && !initialOptions && !busy && !error) make();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const make = async () => {
     setBusy(true);
-    if (on) {
-      try {
-        const { recipe } = await api.generateRecipe({
-          brief: brief || "Something good for tonight", stock: stockForServer(k.stock),
-          serves: k.diners.length || 4, custom: k.customs
-        });
-        setBusy(false);
-        return ui.openSheet("draft", { draft: recipe });
-      } catch (e) { ui.say(e.message + " Built one from a template instead."); }
+    setError(null);
+    if (!on) {
+      setBusy(false);
+      setError("The assistant is switched off. Start the server to create a new recipe.");
+      return;
     }
-    const local = draftRecipe(brief, k.stock);
-    setBusy(false);
-    local ? ui.openSheet("draft", { draft: local }) : ui.say("Not enough in the kitchen to build anything");
+    try {
+      const { recipes } = await api.generateRecipe({
+        brief: brief || "Something good for tonight", stock: stockForServer(k.stock),
+        serves: k.diners.length || 4, custom: k.customs
+      });
+      setBusy(false);
+      setOptions(recipes);
+    } catch (e) {
+      setBusy(false);
+      setError(e.message);
+    }
   };
+
+  const choose = async (idea) => {
+    setOptions(null);
+    setBusy(true);
+    try {
+      const { recipe } = await api.generateRecipe({
+        options: false,
+        brief: `Write the full recipe for this chosen idea: ${idea.name}. ${idea.description}`,
+        stock: stockForServer(k.stock), serves: k.diners.length || 4, custom: k.customs
+      });
+      setBusy(false);
+      ui.openSheet("draft", { draft: recipe });
+    } catch (e) {
+      setBusy(false);
+      setError(e.message);
+    }
+  };
+
+  if (busy || error) return (
+    <Waiting
+      stages={RECIPE_STAGES}
+      error={error}
+      note={ui.server.model ? `${ui.server.model} on this Mac` : "The assistant"}
+      onRetry={() => { setError(null); make(); }}
+      onCancel={() => { setBusy(false); setError(null); }}
+    />
+  );
+
+  if (options) return <RecipeOptions options={options} onChoose={choose}
+    onBack={() => setOptions(null)} />;
 
   return (
     <>
       <p className="sub-note">{on
         ? "The assistant writes this from what's in your kitchen, using what goes off first."
-        : "The server's assistant is off, so this builds a plain dish from a small set of templates. It won't be clever, but it works offline."}</p>
+        : "The assistant is switched off. Start the server to create a new recipe."}</p>
+      {!on && <div className="band is-warm">
+        <b>{ui.server.online ? "Chef model unavailable" : "Backend not reachable"}</b>
+        <span>{ui.server.online ? "Check the assistant settings or model configuration." : "Start the backend on port 8000, then check again."}</span>
+        <button className="btn btn-small btn-ghost" onClick={ui.refreshServer}>Check again</button>
+      </div>}
       <label className="field-label" htmlFor="brief">What do you want?</label>
       <textarea id="brief" className="field field-area" rows={3} value={brief} onChange={(e) => setBrief(e.target.value)}
                 placeholder={on ? (soon.length ? `Something warm with the ${soon[0]} before it goes` : "Something comforting, 30 minutes") : "Name it, or leave blank"} />
@@ -52,10 +103,35 @@ export function CreateSheet() {
           ))}
         </div>
       )}
-      <button className="btn btn-primary" style={{ marginTop: 20 }} onClick={make} disabled={busy}>
-        {busy ? "Writing it…" : on ? "Write it" : "Build one"}
+      <button className="btn btn-primary" style={{ marginTop: 20 }} onClick={make} disabled={!on}>
+        Write it
       </button>
     </>
+  );
+}
+
+function RecipeOptions({ options, onChoose, onBack }) {
+  return (
+    <div className="recipe-options">
+      <p className="sub-note">Pick your dish. Each one is a fresh recipe made for this request.</p>
+      <ol className="option-cards">
+        {options.map((recipe, index) => (
+          <li key={recipe.id}>
+            <button className="option-card" onClick={() => onChoose(recipe)}>
+              <span className="option-number">{index + 1}</span>
+              <span className="option-card-text">
+                <strong>{recipe.name}</strong>
+                <span>{recipe.description || `${recipe.cuisine} · ${recipe.minutes} minutes`}</span>
+                <small>{recipe.needs.slice(0, 4).map(n => E.ref(n.id).name).join(" · ")}</small>
+                <small>Difficulty: {recipe.complexity === 1 ? "Easy" : recipe.complexity === 3 ? "Involved" : "Some work"}</small>
+              </span>
+              <Icon name="next" size={22} />
+            </button>
+          </li>
+        ))}
+      </ol>
+      <button className="link link-block" onClick={onBack}>Change the request</button>
+    </div>
   );
 }
 
@@ -80,6 +156,14 @@ export function LinkSheet() {
       Start it, then try again.</p>
   );
 
+  if (busy) return (
+    <Waiting
+      stages={LINK_STAGES}
+      note="Reading the page on the server"
+      onCancel={() => setBusy(false)}
+    />
+  );
+
   return (
     <>
       <p className="sub-note">Paste a recipe from any cooking site. It's read, matched to your kitchen and{ui.server.recipes
@@ -90,12 +174,12 @@ export function LinkSheet() {
         <input id="url" className="askbar-input" type="url" inputMode="url" value={url} placeholder="https://…"
                onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => e.key === "Enter" && url && read()} />
         {navigator.clipboard?.readText && (
-          <button className="btn btn-small btn-ghost" onClick={async () => { try { setUrl(await navigator.clipboard.readText()); } catch {} }}>Paste</button>
+          <button className="btn btn-small btn-ghost" onClick={async () => { try { setUrl(await navigator.clipboard.readText()); } catch { /* clipboard refused */ } }}>Paste</button>
         )}
       </div>
       {error && <div className="band is-warm"><b>That didn't work</b><span>{error}</span></div>}
-      <button className="btn btn-primary" style={{ marginTop: 20 }} onClick={read} disabled={busy || !/^https?:\/\//.test(url.trim())}>
-        {busy ? "Reading the page…" : "Read it"}
+      <button className="btn btn-primary" style={{ marginTop: 20 }} onClick={read} disabled={!/^https?:\/\//.test(url.trim())}>
+        Read it
       </button>
       <p className="sub-note" style={{ marginTop: 16 }}>Tip: you can also paste a link straight into the chef's chat and cook it together.</p>
     </>
@@ -112,8 +196,8 @@ export function DraftSheet({ draft, method }) {
   const serves = k.diners.length || draft.serves;
 
   const note = draft.origin === "assistant" ? "Written by the assistant. Read it before you trust it — it can be confidently wrong about timings."
-    : draft.origin === "link" ? (method === "plain" ? "Read from the page as written. The assistant is off, so no heat or cues were added." : "Read from the page and adapted to your kitchen's ingredients.")
-    : "Built from a template. Plain by design.";
+    : method === "plain" ? "Read from the page as written. The assistant is off, so no heat or cues were added."
+    : "Read from the page and adapted to your kitchen's ingredients.";
 
   const keep = (thenCook) => {
     if (!name.trim()) return ui.say("Give it a name first");
@@ -127,6 +211,9 @@ export function DraftSheet({ draft, method }) {
       <DishImage recipe={recipe} className="dish-photo dish-draft">
         <PhotoButton recipe={recipe} onDone={setPhoto} />
       </DishImage>
+      {/* Not auto-started: the draft isn't saved yet, so pictures are made only
+          when the button above asks for them. */}
+      <PhotoStrip recipe={recipe} auto onPrimary={setPhoto} />
       <div className="band"><b>{draft.origin === "link" ? `From ${draft.source?.site}` : "Before you save it"}</b><span>{note}</span></div>
       <label className="field-label" htmlFor="rname">Call it</label>
       <input id="rname" className="field" value={name} onChange={(e) => setName(e.target.value)} />

@@ -24,7 +24,7 @@ from .actions import KITCHEN_TOOLS
 from .catalog import id_list, ingredients, recipe_book
 from .config import settings
 from .importer import ImportErrorPublic, fetch, plain_recipe, read_page
-from .recipes import RECIPE_SCHEMA, clean_recipe
+from .recipes import RECIPE_IDEAS_SCHEMA, RECIPE_OPTIONS_SCHEMA, RECIPE_SCHEMA, clean_recipe
 
 router = APIRouter(prefix="/api")
 URL_RX = re.compile(r"https?://[^\s<>\"']+")
@@ -79,6 +79,7 @@ class GenerateIn(Known):
     conversation: list[ChatMessage] = Field(default_factory=list, max_length=40)
     stock: list[StockLine] = Field(default_factory=list)
     serves: int = Field(4, ge=1, le=12)
+    options: bool = True
 
 
 class ImportIn(Known):
@@ -169,14 +170,35 @@ async def recipes_generate(body: GenerateIn, request: Request):
     if body.conversation:
         talk = "\n".join(f"{m.role}: {m.content}" for m in body.conversation[-12:])
         user = f"Turn what we agreed in this conversation into the recipe.\n\n{talk}\n\nExtra wishes: {user}"
+    rag = svc(request, "rag")
+    retrieved = await rag.search(user + " " + stock, 2) if rag else []
     try:
-        raw = await llm.json(prompts.recipe_system(id_list(known), stock, body.serves), user, RECIPE_SCHEMA)
+        if body.options:
+            raw = await llm.json(prompts.recipe_ideas_system(id_list(known), stock, body.serves, retrieved), user, RECIPE_IDEAS_SCHEMA, 900)
+        else:
+            raw = await llm.json(prompts.recipe_system(id_list(known), stock, body.serves, retrieved), user, RECIPE_SCHEMA, 1800)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"The assistant didn't come back ({type(e).__name__}).") from None
-    recipe = clean_recipe(raw, known, origin="assistant")
-    if not recipe:
-        raise HTTPException(502, "The assistant's recipe didn't hold together. Try again.")
-    return {"recipe": recipe}
+    if not body.options:
+        recipe = clean_recipe(raw, known, origin="assistant")
+        if not recipe:
+            raise HTTPException(502, "The assistant's recipe didn't hold together. Try again.")
+        return {"recipe": recipe}
+    ideas = []
+    for item in (raw or {}).get("recipes") or []:
+        if not isinstance(item, dict) or not isinstance(item.get("name"), str):
+            continue
+        ideas.append({
+            "id": f"idea_{len(ideas)}",
+            "name": item["name"][:80],
+            "description": str(item.get("description") or "")[:200],
+            "minutes": max(1, min(600, int(item.get("minutes") or 30))),
+            "complexity": item.get("complexity") if item.get("complexity") in (1, 2, 3) else 2,
+            "cuisine": str(item.get("cuisine") or "Everyday")[:30],
+        })
+    if len(ideas) < 2:
+        raise HTTPException(502, "The assistant couldn't make enough distinct ideas. Try again.")
+    return {"recipes": ideas[:2]}
 
 
 # ---------------------------------------------------------------- understand
@@ -232,8 +254,10 @@ async def chat(body: ChatIn, request: Request):
             except Exception as e:  # noqa: BLE001
                 yield sse({"type": "status", "text": f"Couldn't read that page ({type(e).__name__})."})
 
+        rag = svc(request, "rag")
+        retrieved = await rag.search(last + " " + (body.context.recipe or {}).get("name", "")) if rag else []
         system = prompts.chef_system(body.context.model_dump(), attachment,
-                                     ids=id_list(known), customs=body.custom)
+                         ids=id_list(known), customs=body.custom, retrieved=retrieved)
         msgs = [m.model_dump() for m in body.messages]
         try:
             if hasattr(llm, "chat_actions"):

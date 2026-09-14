@@ -1,0 +1,299 @@
+/* Happy Bite — waiting, and moving between things.
+
+   Two jobs in one file, because they are the same job: telling the user that
+   something happened and that the app is still with them.
+
+   Everything here is guarded twice. `prefers-reduced-motion` is the OS setting
+   and is not negotiable — motion stops, nothing else changes. `body.anim-off`
+   is the app's own bgAnim preference, which App.jsx already toggles, so the
+   switch you built for the cooking background now governs the whole interface.
+
+   Written against the app's existing custom properties so it inherits the
+   theme instead of declaring its own colours. */
+
+/* ===================================================== waiting for a model */
+
+.waiting {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 34px 20px 26px;
+  min-height: 280px;
+}
+
+.waiting-mark {
+  width: 74px;
+  height: 74px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--sunk, rgba(0, 0, 0, 0.04));
+  margin-bottom: 18px;
+  color: var(--mint, #2f9e74);
+}
+
+/* A pan on the heat: three bubbles rising at their own pace. Cheaper than a
+   spinner to look at, and it says "cooking" rather than "computer". */
+.waiting-pan {
+  position: relative;
+  width: 34px;
+  height: 30px;
+  display: block;
+  border: 2.5px solid currentColor;
+  border-top: none;
+  border-radius: 0 0 12px 12px;
+  opacity: 0.85;
+}
+
+.waiting-pan i {
+  position: absolute;
+  bottom: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0;
+  animation: bubble 1.8s ease-in-out infinite;
+}
+
+.waiting-pan i:nth-child(1) { left: 5px;  animation-delay: 0s; }
+.waiting-pan i:nth-child(2) { left: 13px; animation-delay: 0.45s; }
+.waiting-pan i:nth-child(3) { left: 21px; animation-delay: 0.9s; }
+
+@keyframes bubble {
+  0%   { transform: translateY(0) scale(0.6); opacity: 0; }
+  35%  { opacity: 0.85; }
+  100% { transform: translateY(-22px) scale(1.1); opacity: 0; }
+}
+
+.is-failed .waiting-mark {
+  background: var(--warm-sunk, rgba(220, 90, 60, 0.1));
+  color: var(--warm, #c4553a);
+}
+
+.waiting-title {
+  font-size: 1.18rem;
+  font-weight: 650;
+  margin: 0 0 18px;
+  min-height: 1.5em;                        /* no jump as the phase name changes */
+}
+
+.waiting-stages {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  width: min(280px, 100%);
+}
+
+.waiting-stage {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  font-size: 0.94rem;
+  transition: opacity 0.25s ease;
+}
+
+.waiting-dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  opacity: 0.35;
+}
+
+.waiting-stage.is-done   { opacity: 0.55; }
+.waiting-stage.is-done .waiting-dot { background: currentColor; opacity: 0.55; }
+
+.waiting-stage.is-now    { opacity: 1; font-weight: 600; color: var(--mint, #2f9e74); }
+.waiting-stage.is-now .waiting-dot {
+  background: currentColor;
+  opacity: 1;
+  animation: pip 1.3s ease-in-out infinite;
+}
+
+.waiting-stage.is-stuck  { opacity: 1; color: var(--warm, #c4553a); font-weight: 600; }
+.waiting-stage.is-stuck .waiting-dot { background: currentColor; opacity: 1; }
+
+.waiting-stage.is-todo   { opacity: 0.4; }
+
+@keyframes pip {
+  0%, 100% { box-shadow: 0 0 0 0 currentColor; }
+  50%      { box-shadow: 0 0 0 4px transparent; }
+}
+
+.waiting-meta,
+.waiting-slow,
+.waiting-error {
+  margin: 0;
+  font-size: 0.85rem;
+  opacity: 0.7;
+  max-width: 34ch;
+}
+
+.waiting-clock { font-variant-numeric: tabular-nums; }
+
+.waiting-slow { margin-top: 10px; opacity: 0.6; }
+
+.waiting-error { color: var(--warm, #c4553a); opacity: 1; }
+
+.waiting-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+/* ---- the inline version -------------------------------------------------- */
+
+.working {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+}
+
+.working-dots { display: inline-flex; gap: 3px; }
+
+.working-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.4;
+  animation: dot 1.2s ease-in-out infinite;
+}
+
+.working-dots i:nth-child(2) { animation-delay: 0.15s; }
+.working-dots i:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes dot {
+  0%, 100% { opacity: 0.25; transform: translateY(0); }
+  40%      { opacity: 0.9;  transform: translateY(-3px); }
+}
+
+/* ===================================================== opening the app */
+
+.boot-mark {
+  display: flex;
+  gap: 7px;
+  margin-bottom: 16px;
+}
+
+.boot-mark span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--mint, #2f9e74);
+  animation: dot 1.2s ease-in-out infinite;
+}
+
+.boot-mark span:nth-child(2) { animation-delay: 0.15s; }
+.boot-mark span:nth-child(3) { animation-delay: 0.3s; }
+
+.boot-name { margin: 0; font-weight: 650; font-size: 1.05rem; }
+.boot-note { margin: 4px 0 0; font-size: 0.85rem; opacity: 0.6; }
+
+/* ===================================================== moving between things */
+/* Tab changes remount the screen (App.jsx keys it on the tab), so a plain
+   mount animation is all that's needed — no transition library, no exit
+   animation to keep in sync with routing. */
+
+.screen-swap {
+  animation: screen-in 150ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+@keyframes screen-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Sheets rise; the scrim behind them fades. Both are styled by class name
+   only, so no JSX changes anywhere for this to apply. */
+.sheet-scrim {
+  animation: scrim-in 180ms ease-out both;
+}
+
+.sheet-panel {
+  animation: sheet-in 240ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+@keyframes scrim-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes sheet-in {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* A list of cards arrives as a list, not all at once. Capped at eight so a long
+   recipe book doesn't spend a second and a half assembling itself. */
+.cards > li {
+  animation: card-in 220ms ease-out both;
+}
+
+.cards > li:nth-child(1) { animation-delay: 0ms; }
+.cards > li:nth-child(2) { animation-delay: 35ms; }
+.cards > li:nth-child(3) { animation-delay: 70ms; }
+.cards > li:nth-child(4) { animation-delay: 105ms; }
+.cards > li:nth-child(5) { animation-delay: 140ms; }
+.cards > li:nth-child(6) { animation-delay: 175ms; }
+.cards > li:nth-child(7) { animation-delay: 210ms; }
+.cards > li:nth-child(n+8) { animation-delay: 240ms; }
+
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* The chef's answer in cooking mode, and the receipts under a chat reply. */
+.cook-answer,
+.action-receipt {
+  animation: card-in 220ms ease-out both;
+}
+
+/* ===================================================== the two off switches */
+
+body.anim-off .screen-swap,
+body.anim-off .sheet-panel,
+body.anim-off .sheet-scrim,
+body.anim-off .cards > li,
+body.anim-off .cook-answer,
+body.anim-off .action-receipt {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen-swap,
+  .sheet-panel,
+  .sheet-scrim,
+  .cards > li,
+  .cook-answer,
+  .action-receipt {
+    animation: none;
+  }
+  /* The waiting states keep a heartbeat even here — something must move, or
+     there is no way to tell a slow model from a frozen app. Slowed right down
+     and with no travel. */
+  .waiting-pan i,
+  .working-dots i,
+  .boot-mark span,
+  .waiting-stage.is-now .waiting-dot {
+    animation-duration: 3s;
+    animation-timing-function: ease-in-out;
+  }
+  @keyframes bubble {
+    0%, 100% { opacity: 0.15; transform: none; }
+    50%      { opacity: 0.8;  transform: none; }
+  }
+  @keyframes dot {
+    0%, 100% { opacity: 0.25; transform: none; }
+    50%      { opacity: 0.9;  transform: none; }
+  }
+}

@@ -8,3 +8,9 @@ Start the Frontend
 cd happy-bite/frontend
 npm install
 npm run dev
+
+Start AI model 
+ollama serve
+
+
+3 terminals

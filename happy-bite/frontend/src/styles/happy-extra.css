@@ -1,0 +1,106 @@
+/* Happy Bite — styles for what this upgrade added.
+
+   Kept in one file so it can be removed as easily as it was added, and written
+   against the app's own custom properties so it inherits the theme rather than
+   stating its own colours. */
+
+/* ---------------------------------------------------- recipe picture strip */
+
+.photo-strip { margin: 16px 0 4px; }
+
+.photo-strip-row {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+}
+
+.photo-thumb {
+  flex: 0 0 auto;
+  width: 84px;
+  height: 84px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--sunk, rgba(0, 0, 0, 0.05));
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.photo-thumb:hover { transform: translateY(-1px); }
+.photo-thumb.is-on { border-color: var(--mint, #2f9e74); }
+.photo-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.photo-thumb.is-waiting {
+  opacity: 0.5;
+  cursor: default;
+  animation: photo-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes photo-pulse {
+  0%, 100% { opacity: 0.32; }
+  50%      { opacity: 0.68; }
+}
+
+.photo-strip-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.photo-strip-note { margin-top: 8px; }
+
+/* -------------------------------------------------------- recipe choices */
+
+.recipe-options { padding-top: 4px; }
+.option-cards { list-style: none; padding: 0; margin: 18px 0 8px; display: grid; gap: 12px; counter-reset: recipe-option; }
+.option-card { width: 100%; display: flex; align-items: center; gap: 14px; padding: 16px 14px; text-align: left;
+  border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); color: var(--ink);
+  box-shadow: var(--lift); cursor: pointer; transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease; }
+.option-card:hover { transform: translateY(-2px); border-color: var(--mint); box-shadow: var(--lift-lg); }
+.option-number { flex: none; width: 42px; height: 42px; display: grid; place-items: center; border-radius: 13px;
+  background: var(--mint-wash); color: var(--mint-deep); font-size: 22px; font-weight: 850; }
+.option-card-text { min-width: 0; display: grid; gap: 4px; flex: 1; }
+.option-card-text strong { font-size: 18px; line-height: 1.15; }
+.option-card-text span, .option-card-text small { color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.option-card-text small { font-size: 12px; opacity: .8; }
+.option-card > .icon { color: var(--mint-deep); flex: none; }
+
+/* ------------------------------------------------------- receipt shortcut */
+
+.receipt-cta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 4px 0 18px;
+}
+
+.receipt-cta.is-compact { margin: 0 0 12px; }
+.receipt-cta .btn { cursor: pointer; }
+
+/* ------------------------------------------------------ instant-answer tag */
+/* A parked answer arrives with no wait at all, which reads as suspicious
+   unless the interface owns it. A quiet mark is enough. */
+
+.cook-answer.is-instant .cook-answer-ic { color: var(--mint, #2f9e74); }
+
+.answer-instant {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 0.72em;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.55;
+  vertical-align: middle;
+}
+
+@media (max-width: 420px) {
+  .photo-thumb { width: 68px; height: 68px; }
+}

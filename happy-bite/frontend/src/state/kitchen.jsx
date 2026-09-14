@@ -30,6 +30,14 @@ const PERSISTED = {
 async function load() {
   const s = {};
   for (const [key, fb] of Object.entries(PERSISTED)) s[key] = await Store.read(key, fb);
+  // One-time migration: remove the old built-in/template-created local book,
+  // then preserve recipes created by the assistant from this point onward.
+  const recipeReset = await Store.read("recipeBookReset", false);
+  if (!recipeReset) {
+    s.myRecipes = [];
+    await Store.write("myRecipes", s.myRecipes);
+    await Store.write("recipeBookReset", true);
+  }
   if (!s.stock) {
     const t0 = E.today().getTime();
     s.stock = STARTING_STOCK.map(a => ({

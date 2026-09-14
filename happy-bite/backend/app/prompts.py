@@ -118,7 +118,8 @@ def _strip_tiny_times(recipe: dict) -> dict:
         return recipe
 
 
-def chef_system(ctx: dict, attachment: dict | None, ids: str = "", customs: dict | None = None) -> str:
+def chef_system(ctx: dict, attachment: dict | None, ids: str = "", customs: dict | None = None,
+                retrieved: list[dict] | None = None) -> str:
     parts = [CHEF, _ids_block(ids, customs)]
     stock = ctx.get("stock") or []
     if stock:
@@ -140,11 +141,23 @@ def chef_system(ctx: dict, attachment: dict | None, ids: str = "", customs: dict
     if attachment:
         parts.append("They shared a link. What the page contains:\n"
                      + json.dumps(attachment, ensure_ascii=False)[:9000])
+    if retrieved:
+        parts.append("Relevant reference recipes from a large cooking corpus. Use them as "
+                     "inspiration and explain similarities or substitutions; do not claim "
+                     "they are the user's recipe:\n" + _retrieved_text(retrieved))
     return "\n\n".join(parts)
 
 
-def recipe_system(id_list: str, stock_lines: str, serves: int) -> str:
-    return f"""You write recipes for a kitchen app used by tired people standing up.
+def _retrieved_text(recipes: list[dict]) -> str:
+    return "\n\n".join(
+        f"- {r.get('title')}: ingredients: {r.get('ingredients')}; method: {r.get('instructions')}"
+        for r in recipes[:8]
+    )[:12000]
+
+
+def recipe_system(id_list: str, stock_lines: str, serves: int,
+                  retrieved: list[dict] | None = None) -> str:
+    system = f"""You write recipes for a kitchen app used by tired people standing up.
 The recipes must be genuinely good: real technique, balanced seasoning, a
 reason to look forward to dinner. Not "healthy bowl" filler.
 
@@ -156,7 +169,31 @@ Prefer what's in the kitchen, especially anything that goes off soon. Put
 anything that must be bought in "needs" anyway — the app will flag it.
 Cook for {serves}.
 
+If the request is broad or vague, decide the dish yourself from the kitchen
+inventory and the reference recipes. Do not ask what is in the kitchen: the
+inventory above is authoritative. Use the retrieved corpus for proven ideas,
+then make a fresh recipe.
+
 {RULES}"""
+    if retrieved:
+      return system + ("\n\nReference recipes retrieved for this request. Use them only to "
+               "understand broad ingredient pairings and techniques. Create a "
+               "new recipe with a different name, ingredient combination or "
+               "method; never reproduce a reference recipe or its wording. "
+               "Follow the valid ingredient-id rules above:\n" + _retrieved_text(retrieved))
+    return system
+
+
+def recipe_options_system(id_list: str, stock_lines: str, serves: int,
+                          retrieved: list[dict] | None = None) -> str:
+    base = recipe_system(id_list, stock_lines, serves, retrieved)
+    return base + "\n\nReturn exactly two genuinely different recipe options. Keep each option concise: four steps, short names, one-sentence descriptions, and only the ingredients and seasoning that matter. Give each a distinct name and a meaningfully different combination or technique. Do not ask follow-up questions; make sensible assumptions and let the user choose."
+
+
+def recipe_ideas_system(id_list: str, stock_lines: str, serves: int,
+                        retrieved: list[dict] | None = None) -> str:
+    base = recipe_system(id_list, stock_lines, serves, retrieved)
+    return base + "\n\nReturn exactly two concise recipe ideas only. Do not write ingredients or steps yet. Give each a distinct name, one-sentence description, cuisine, minutes, and difficulty. Decide everything yourself from the kitchen and request; do not ask questions."
 
 
 def import_system(id_list: str) -> str:
@@ -202,7 +239,7 @@ def dish_image_prompt(name: str, cuisine: str | None, description: str | None) -
 
 
 def step_image_prompt(name: str, step: str, cue: str | None) -> str:
-    return (f"Close-up realistic photograph of a home cook's pan or dish while making {name}. "
+    return (f"Small crisp pixel-art cooking illustration of a pan or dish while making {name}. "
             f"The moment shown: {step}"
             + (f" — it should look like this: {cue}." if cue else ".")
-            + " Natural kitchen light, shot from slightly above, no text, no faces.")
+            + " 16-bit game art, warm kitchen palette, clear chunky shapes, no text, no faces.")

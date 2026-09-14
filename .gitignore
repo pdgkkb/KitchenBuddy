@@ -3,6 +3,8 @@
 
 # Ignore datasets and large data folders everywhere
 **/data/
+**/shared/
+**/media/
 
 
 # Python cache & virtual environments

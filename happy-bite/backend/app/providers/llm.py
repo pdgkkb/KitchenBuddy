@@ -119,7 +119,8 @@ class OpenAICompatLLM:
     def __init__(self, s: Settings):
         from openai import AsyncOpenAI
         self.client = AsyncOpenAI(api_key=s.openai_api_key or "none",
-                                  base_url=s.openai_base_url or None)
+                      base_url=s.openai_base_url or None,
+                      timeout=120.0)
         self.model = s.llm_model
         self.name = f"openai:{s.llm_model}" + (" (local)" if s.openai_base_url else "")
 

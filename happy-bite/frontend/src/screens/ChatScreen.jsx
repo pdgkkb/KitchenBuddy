@@ -79,6 +79,7 @@ export default function ChatScreen() {
     setDrafting(true);
     try {
       const { recipe } = await api.generateRecipe({
+        options: false,
         conversation: chat.messages.filter(m => m.id !== "hello" && m.content).map(({ role, content }) => ({ role, content })),
         stock: stockForServer(k.stock), serves, custom: k.customs
       });

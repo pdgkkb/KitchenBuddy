@@ -27,7 +27,7 @@ export function UIProvider({ children }) {
   const refreshServer = useCallback(() => api.status().then(setServer), []);
   useEffect(() => {
     refreshServer();
-    const h = setInterval(refreshServer, 30000);
+    const h = setInterval(refreshServer, 5000);
     window.addEventListener("online", refreshServer);
     return () => { clearInterval(h); window.removeEventListener("online", refreshServer); };
   }, [refreshServer]);

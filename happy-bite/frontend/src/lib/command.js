@@ -110,6 +110,14 @@ export function parse(text, ctx = {}) {
   const t = norm(text);
   if (!t) return null;
 
+  // Broad recipe requests are actions, not questions. The creator has the
+  // live kitchen inventory and can decide the details without asking.
+  if (/\b(create|make|cook|prepare|whip up|fix)\b/.test(t) &&
+      /\b(recipe|something|dish|meal|dinner|lunch|breakfast)\b/.test(t) &&
+      !/\b(open|show|see|view|go to|take me to)\b/.test(t)) {
+    return { action: { kind: "generate_recipe", brief: text.trim() } };
+  }
+
   // Stop a running timer.
   if (/\b(stop|cancel|clear|kill|dismiss)\b.*\btimer\b/.test(t) || /\bno timer\b/.test(t))
     return { action: { kind: "stop_timer" }, say: "Timer stopped." };

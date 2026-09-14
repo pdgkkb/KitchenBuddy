@@ -13,6 +13,7 @@ import { useUI } from "../state/ui.jsx";
 import { DishImage } from "../components/Chrome.jsx";
 import { Icon } from "../components/Icon.jsx";
 import { DishTags, nameOf } from "../screens/Today.jsx";
+import PhotoStrip from "../components/PhotoStrip.jsx";
 
 /* Everything about the dish EXCEPT the method: what you need, seasoning,
    options, ideas. This is the left column on a wide screen. */
@@ -109,6 +110,7 @@ export function RecipeMethod({ recipe: r }) {
           <li key={i} className="step">
             <span className="step-no">{i + 1}</span>
             <div>
+              <p className="step-label">Step {i + 1} · {st.minutes >= 3 ? `${st.minutes} min` : "watch closely"}</p>
               {(st.heat || st.cue) && <p className="step-heat">
                 {st.heat && <span className="heat-tag"><Icon name="flame" size={16} />{st.heat}</span>}
                 {st.cue && <span className="heat-cue">until {st.cue.toLowerCase()}</span>}</p>}
@@ -173,6 +175,7 @@ export default function RecipeSheet({ id }) {
             <div className="sheet-body">
               {r.description && <p className="lead">{r.description}</p>}
               {r.source && <p className="sub-note">From <a href={r.source.url} target="_blank" rel="noreferrer">{r.source.site}</a>. Adapted for your kitchen; the original is the authority.</p>}
+              <PhotoStrip recipe={r} />
               <RecipeDetails recipe={r} serves={serves} choices={choices} setChoices={setChoices} />
             </div>
           </div>

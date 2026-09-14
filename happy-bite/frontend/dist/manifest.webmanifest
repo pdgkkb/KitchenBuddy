@@ -1,0 +1,14 @@
+{
+  "name": "Happy Bite",
+  "short_name": "Happy Bite",
+  "description": "What's for dinner, from what's already in the kitchen.",
+  "lang": "en",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F3F7F6",
+  "theme_color": "#F3F7F6",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

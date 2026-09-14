@@ -233,7 +233,10 @@ body::after {
   background: var(--grad-mint); color: #05231A;
   box-shadow: 0 14px 30px -8px rgba(47,190,139,.7); transition: transform .15s ease; }
 .agent-fab:active { transform: scale(.92); }
-.agent-fab.is-live { background: var(--coral); color: #fff; animation: apulse 1.2s ease-in-out infinite; }
+.agent-fab.is-live { color: #fff; animation: apulse 1.2s ease-in-out infinite; }
+.agent-fab.is-listening { background: var(--mint); }
+.agent-fab.is-thinking { background: var(--sky); }
+.agent-fab.is-speaking { background: var(--peach); }
 @keyframes apulse { 50% { box-shadow: 0 0 0 14px rgba(239,84,104,.15); } }
 .agent-card { max-width: 280px; background: rgba(255,255,255,.94); backdrop-filter: blur(12px);
   border: 1px solid rgba(255,255,255,.6); border-radius: 18px; padding: 12px 14px; box-shadow: var(--lift); }
@@ -272,6 +275,7 @@ body::after {
 
 /* The right column's method, roomier on a wide screen */
 .recipe-right .steps { margin-top: 6px; }
+.recipe-right .step { min-height: 116px; }
 
 /* Wide generator / draft / link sheets, to match */
 @media (min-width: 860px) {
@@ -352,8 +356,18 @@ body::after {
   display: flex; flex-direction: column; gap: 14px;
 }
 .cook-stage .cook-ing-toggle { align-self: flex-start; }
+.cook-recipe-summary { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-lg); background: rgba(255,255,255,.78); box-shadow: var(--lift); }
+.cook-recipe-summary span { flex: 1; font-weight: 800; font-size: 18px; }
+.cook-recipe-summary b { color: var(--mint-deep); }
+.cook-recipe-summary small { color: var(--ink-soft); }
 .cook-stepno { margin: 0; font-weight: 800; letter-spacing: .12em; text-transform: uppercase;
   font-size: 12px; color: var(--ink-faint); }
+.cook-step-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.cook-percent { font-size: 13px; font-weight: 750; color: var(--mint-deep); }
+.progress button { overflow: visible; }
+.progress-emoji { position: absolute; z-index: 2; left: 50%; top: -18px; transform: translateX(-50%); font-size: 22px; line-height: 1;
+  filter: drop-shadow(0 2px 0 rgba(18,48,42,.15)); animation: progress-bob 1.2s ease-in-out infinite; }
+@keyframes progress-bob { 50% { transform: translate(-50%, -4px) rotate(-6deg); } }
 .kpts { display: flex; flex-wrap: wrap; gap: 8px; }
 .kpt { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 999px;
   font-weight: 650; font-size: 14px; background: rgba(255,255,255,.8); backdrop-filter: blur(6px);
@@ -362,7 +376,12 @@ body::after {
 .kpt-cue { color: var(--ink-soft); font-style: italic; }
 .kpt-time { color: var(--ink-soft); }
 .cook-do { font-size: clamp(30px, 5vw, 46px); line-height: 1.08; letter-spacing: -0.02em; margin: 2px 0 0; }
-.cook-solo .cook-why { font-size: 17px; color: var(--ink-soft); margin: 2px 0 0; }
+.cook-keypoints { padding: 18px; border: 1px solid var(--line); border-radius: var(--r-lg); background: rgba(255,255,255,.82); box-shadow: var(--lift); }
+.cook-keypoints .cook-do { font-size: 24px; margin: 0 0 10px; }
+.cook-keypoints ul { margin: 0; padding-left: 24px; display: grid; gap: 8px; font-size: 20px; line-height: 1.35; }
+.cook-keypoints li::marker { color: var(--mint-deep); }
+.cook-keypoints .cook-why { margin: 14px 0 0; }
+.cook-solo .cook-why { font-size: 17px; color: var(--ink-soft); margin: 2px 0 0; padding: 14px 16px; border-left: 4px solid var(--mint); border-radius: 0 var(--r-md) var(--r-md) 0; background: var(--mint-wash); }
 .cook-pic { border-radius: var(--r-lg); max-height: 34vh; width: auto; align-self: flex-start; box-shadow: var(--lift); }
 
 /* the chef's short spoken answer, as a caption — not a chat log */
