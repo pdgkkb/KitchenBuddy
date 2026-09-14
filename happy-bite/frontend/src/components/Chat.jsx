@@ -3,7 +3,11 @@
    One conversation engine, two places: the full-screen chat from the round
    button, and the panel beside the steps in cooking mode. Replies stream
    in as they're written; a pasted recipe link is read by the server and
-   comes back as a card you can save or start cooking. */
+   comes back as a card you can save or start cooking.
+
+   The chef can also change the kitchen — lower the milk, save a recipe, set
+   a timer. Those arrive as `action` events mid-stream; `onAction` carries
+   each one out and hands back a one-line receipt shown under the reply. */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../lib/api.js";
@@ -15,19 +19,22 @@ import { ref } from "../core/engine.js";
 
 let voiceAgreed = false;                    // asked once per session, never stored
 
-export function useChat(context, greeting) {
+export function useChat(context, greeting, onAction) {
   const { k } = useKitchen();
+  const { server } = useUI();
   const [messages, setMessages] = useState(() => greeting ? [{ id: "hello", role: "assistant", content: greeting }] : []);
   const [busy, setBusy] = useState(false);
   const abort = useRef(null);
   const live = useRef(messages);
   live.current = messages;
+  const act = useRef(onAction);
+  act.current = onAction;
 
   const patchLast = (fn) => setMessages(ms => ms.map((m, i) => i === ms.length - 1 ? { ...m, ...fn(m) } : m));
 
   const send = useCallback(async (text) => {
-    const clean = text.trim();
-    if (!clean || busy) return;
+    const clean = String(text || "").trim();
+    if (!clean || busy) return "";
     const history = [...live.current, { id: "u" + Date.now(), role: "user", content: clean }];
     setMessages([...history, { id: "a" + Date.now(), role: "assistant", content: "", pending: true }]);
     setBusy(true);
@@ -40,20 +47,30 @@ export function useChat(context, greeting) {
         custom: k.customs
       }, (ev) => {
         if (ev.type === "delta") { reply += ev.text; patchLast(() => ({ content: reply, status: null })); }
+        else if (ev.type === "action") {
+          const receipt = act.current ? act.current(ev.action) : null;
+          if (receipt) patchLast(m => ({ actions: [...(m.actions || []), receipt] }));
+        }
         else if (ev.type === "attachment") patchLast(() => ({ attachment: ev.recipe, method: ev.method }));
         else if (ev.type === "status") patchLast(() => ({ status: ev.text }));
         else if (ev.type === "error") patchLast(() => ({ error: ev.message }));
       }, abort.current.signal);
-      if (reply && k.prefs.speakReplies) voice.speak(reply, false);
     } catch (e) {
       if (e.name !== "AbortError") patchLast(() => ({ error: e.message }));
     } finally {
       patchLast(() => ({ pending: false }));
       setBusy(false);
     }
-  }, [busy, context, k.customs, k.prefs.speakReplies]);
+    // Speak the reply and WAIT for it to finish, so a hands-free loop knows
+    // when it's its turn to listen again. Uses the local Kokoro voice when the
+    // server has one, else the browser voice.
+    if (reply && k.prefs.speakReplies) {
+      try { await voice.speak(reply, server.voice); } catch { /* ignore */ }
+    }
+    return reply;
+  }, [busy, context, k.customs, k.prefs.speakReplies, server.voice]);
 
-  const stop = () => abort.current?.abort();
+  const stop = () => { abort.current?.abort(); voice.stopSpeaking(); };
   return { messages, send, busy, stop };
 }
 
@@ -61,7 +78,7 @@ export function ChatThread({ messages, onSaveRecipe, onCookRecipe }) {
   const end = useRef(null);
   const last = messages[messages.length - 1];
   useEffect(() => { end.current?.scrollIntoView({ block: "end", behavior: "smooth" }); },
-    [messages.length, last?.content?.length]);
+    [messages.length, last?.content?.length, last?.actions?.length]);
 
   return (
     <div className="thread" aria-live="polite">
@@ -74,7 +91,15 @@ export function ChatThread({ messages, onSaveRecipe, onCookRecipe }) {
                                        onSave={onSaveRecipe} onCook={onCookRecipe} />}
             {m.content
               ? m.content.split(/\n{2,}/).map((p, i) => <p key={i}>{p}</p>)
-              : m.pending && !m.status && <span className="typing" aria-label="Writing"><i /><i /><i /></span>}
+              : m.pending && !m.status && !(m.actions || []).length && <span className="typing" aria-label="Writing"><i /><i /><i /></span>}
+            {(m.actions || []).map((a, i) => (
+              <div key={i} className="action-receipt">
+                <span className="action-tick" aria-hidden>✓</span><span>{a.text}</span>
+                {a.recipe && (
+                  <button className="btn btn-small btn-ghost" onClick={() => onCookRecipe(a.recipe)}>Cook it</button>
+                )}
+              </div>
+            ))}
             {m.error && <p className="bubble-err">{m.error}</p>}
           </div>
         </div>

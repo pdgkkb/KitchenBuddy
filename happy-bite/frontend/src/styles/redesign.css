@@ -1,0 +1,414 @@
+/* Happy Bite — redesign layer (v2: warmer, livelier, professional).
+
+   Loaded AFTER tokens.css and app.css, so it overrides them without touching
+   the originals (delete the import in main.jsx to revert). Three jobs:
+   1) a warmer, more appetising palette + depth;
+   2) a living, animated colour field behind everything;
+   3) a reworked Today screen and a layout that fills a laptop screen. */
+
+/* ---------------------------------------------------------------- tokens */
+:root {
+  --ground:        #F5F4EE;          /* warm oat, not clinical grey */
+  --surface:       #FFFFFF;
+  --surface-sunk:  #EFEDE4;
+  --line:          #E7E4D8;
+  --ring-track:    #ECE9DE;
+
+  --ink:           #1E2A21;          /* warm pine-black */
+  --ink-soft:      #5E685C;
+  --ink-faint:     #9AA394;
+
+  --mint:          #2FBE8B;          /* fresh herb green — the brand */
+  --mint-deep:     #0C7A56;
+  --mint-wash:     #E2F5EC;
+  --sky:           #3AA7E0;
+  --sky-wash:      #E4F2FB;
+  --peach:         #F59E4D;          /* warm — used generously now */
+  --peach-wash:    #FDEEDD;
+  --tomato:        #EA5B4B;          /* appetising warm red accent */
+  --butter:        #F6E4AC;
+  --coral:         #EF5468;          /* reserved: goes off soon */
+  --coral-wash:    #FCE6E9;
+
+  --r-xl: 30px; --r-lg: 24px; --r-md: 16px; --r-sm: 12px;
+
+  --lift:    0 1px 2px rgba(30,42,33,.05), 0 14px 32px -16px rgba(30,42,33,.20);
+  --lift-lg: 0 3px 8px rgba(30,42,33,.07), 0 34px 70px -26px rgba(30,42,33,.34);
+
+  --grad-mint:   linear-gradient(135deg, #37D29C, #159A6E);
+  --grad-warm:   linear-gradient(135deg, #FBB360, #F0803E);
+  --grad-fresh:  linear-gradient(120deg, #2FBE8B 0%, #38B0C4 60%, #3AA7E0 100%);
+  --frame: 1160px;
+}
+
+/* ---------------------------------------------------------------- living background
+   A calm ground colour, with two slow-drifting fields of coloured light on a
+   fixed layer behind all content. Large and soft, so it reads as atmosphere,
+   never as decoration fighting the food. */
+body { background: var(--ground); }
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: -20%;
+  z-index: -2;
+  background:
+    radial-gradient(38% 40% at 18% 22%, rgba(47,190,139,.50), transparent 60%),
+    radial-gradient(34% 38% at 82% 16%, rgba(58,167,224,.42), transparent 60%),
+    radial-gradient(42% 44% at 72% 82%, rgba(245,158,77,.46), transparent 62%),
+    radial-gradient(36% 40% at 26% 88%, rgba(234,91,75,.34), transparent 60%);
+  filter: blur(26px) saturate(1.15);
+  animation: drift 22s ease-in-out infinite alternate, hue 40s linear infinite;
+  will-change: transform, filter;
+}
+body::after {
+  content: "";
+  position: fixed;
+  inset: -25%;
+  z-index: -2;
+  background:
+    radial-gradient(30% 34% at 60% 30%, rgba(47,190,139,.34), transparent 60%),
+    radial-gradient(32% 36% at 30% 62%, rgba(245,158,77,.30), transparent 60%),
+    radial-gradient(28% 32% at 88% 66%, rgba(58,167,224,.26), transparent 60%);
+  filter: blur(30px);
+  animation: drift2 30s ease-in-out infinite alternate;
+  will-change: transform;
+}
+@keyframes drift {
+  0%   { transform: translate3d(0,0,0) scale(1) rotate(0deg); }
+  100% { transform: translate3d(5%, -4%, 0) scale(1.22) rotate(7deg); }
+}
+@keyframes drift2 {
+  0%   { transform: translate3d(0,0,0) scale(1.08) rotate(0deg); }
+  100% { transform: translate3d(-6%, 5%, 0) scale(1) rotate(-6deg); }
+}
+@keyframes hue {
+  0%   { filter: blur(26px) saturate(1.15) hue-rotate(0deg); }
+  100% { filter: blur(26px) saturate(1.15) hue-rotate(360deg); }
+}
+
+/* Frosted, translucent surfaces so the colour field glows through the gaps */
+.dish-card, .table-strip, .dash-rings, .panel, .tile, .rcard, .make, .week, .ideas, .score-part, .rows .row {
+  background: rgba(255,255,255,.86);
+  backdrop-filter: blur(8px);
+  box-shadow: var(--lift);
+  border: 1px solid rgba(255,255,255,.55);
+}
+.dish-card { box-shadow: var(--lift-lg); border: 0; }
+
+/* ---------------------------------------------------------------- buttons & chips */
+.btn-primary { background: var(--grad-mint); color: #05231A;
+  box-shadow: 0 10px 22px -8px rgba(47,190,139,.6); }
+.btn-primary:active { filter: brightness(.95); }
+.chip { background: rgba(255,255,255,.8); border-color: var(--line); }
+.chip.is-on { color: #05231A; }
+
+/* Rows: soft cards with space */
+.rows { display: flex; flex-direction: column; gap: 8px; }
+.rows .row { border-bottom: 0; border-radius: var(--r-md); padding: 12px 14px; }
+.rows .row:active { background: var(--surface-sunk); }
+
+/* ---------------------------------------------------------------- TODAY */
+.today-date { text-transform: uppercase; letter-spacing: .14em; font-weight: 700;
+  font-size: 13px; color: var(--peach); }
+.today-head .screen-title, .screen-title {
+  font-weight: 800; letter-spacing: -0.03em;
+}
+/* "Tonight" gets an appetising gradient wordmark */
+.today-head .screen-title {
+  font-size: clamp(34px, 7vw, 52px); line-height: 1.02;
+  background: var(--grad-fresh); -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.week { background: rgba(255,255,255,.8); border-radius: var(--r-lg); }
+
+.askbar-input {
+  background: rgba(255,255,255,.9); border-color: transparent;
+  box-shadow: 0 2px 10px -4px rgba(30,42,33,.15), inset 0 0 0 2px rgba(47,190,139,.12);
+  font-size: 21px;
+}
+.askbar-input:focus { box-shadow: 0 6px 18px -6px rgba(47,190,139,.35), inset 0 0 0 2px var(--mint); }
+
+/* The dish hero — the star of the screen */
+.dish-card { border-radius: var(--r-xl); }
+.dish-hero { max-height: 54vh; }
+.dish-hero img { animation: kenburns 22s ease-in-out infinite alternate; }
+@keyframes kenburns { from { transform: scale(1.02); } to { transform: scale(1.1); } }
+.dish-overlay { padding: 90px 26px 22px;
+  background: linear-gradient(transparent, rgba(10,28,21,.28) 42%, rgba(10,28,21,.85)); }
+.dish-name { font-size: clamp(30px, 5vw, 46px); letter-spacing: -0.025em; }
+.tag { background: rgba(255,255,255,.24); backdrop-filter: blur(8px); font-weight: 650; }
+.tag-mint { background: var(--mint); color: #05231A; }
+.match { padding: 20px 22px; }
+.reason.is-warm .reason-head { color: var(--tomato); }
+
+/* Dashboard */
+.section-title { letter-spacing: -0.02em; font-weight: 800; }
+.tile { border-radius: var(--r-lg); padding: 20px; position: relative; overflow: hidden; }
+.tile-value { font-size: 46px; }
+.tile::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 4px; background: var(--grad-mint); }
+.tile:nth-child(2)::after { background: var(--grad-fresh); }
+.tile:nth-child(3)::after { background: var(--grad-warm); }
+
+/* ---------------------------------------------------------------- recipe cards */
+.make { background: rgba(255,255,255,.85); }
+.rcard { border-radius: var(--r-lg); padding: 12px; gap: 18px; }
+.rcard-img { width: 104px; height: 104px; border-radius: var(--r-md); }
+.rcard-name { font-size: 21px; }
+
+/* ---------------------------------------------------------------- floating nav */
+.tabs {
+  left: 50%; right: auto; transform: translateX(-50%);
+  width: min(560px, calc(100% - 24px));
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  height: 74px; padding-bottom: 0;
+  border: 1px solid rgba(255,255,255,.6);
+  border-radius: 26px;
+  background: rgba(255,255,255,.7);
+  backdrop-filter: blur(18px) saturate(1.4);
+  box-shadow: 0 20px 44px -18px rgba(30,42,33,.5);
+}
+.main { padding-bottom: calc(74px + 48px + env(safe-area-inset-bottom)); }
+.tab[aria-current="page"] { color: var(--mint-deep); }
+.tab-fab { background: var(--grad-mint); box-shadow: 0 12px 26px -6px rgba(47,190,139,.65);
+  animation: bob 4s ease-in-out infinite; }
+@keyframes bob { 50% { transform: translateY(-3px); } }
+.tab-fab.is-open { animation: none; }
+.tray { bottom: calc(74px + 26px + env(safe-area-inset-bottom)); }
+
+/* ---------------------------------------------------------------- micro-interactions */
+@media (hover: hover) {
+  .rcard, .tile, .make, .table-strip { transition: transform .18s ease, box-shadow .18s ease; }
+  .rcard:hover, .make:hover, .table-strip:hover { transform: translateY(-3px); box-shadow: var(--lift-lg); }
+  .btn-primary:hover { filter: brightness(1.03); }
+}
+
+/* ================================================================ DESKTOP
+   Fill the screen instead of a phone-width column. */
+@media (min-width: 900px) {
+  .screen { max-width: var(--frame); padding-left: 32px; padding-right: 32px; }
+
+  .cards { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+  .rcard { position: relative; flex-direction: column; align-items: stretch; text-align: left; }
+  .rcard-img { width: 100%; height: 180px; }
+  .rcard .ring { position: absolute; top: 12px; right: 12px; margin: 0;
+    background: rgba(255,255,255,.85); border-radius: 50%; padding: 3px; }
+
+  .rows { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  /* Everything on Today shares one width AND is centred in the screen, so the
+     column sits in the middle of a wide display instead of hugging the left.
+     margin-inline:auto is what centres it. */
+  .dish-card, .today-head, .askbar, .ask-pill, .week, .table-strip,
+  .pills, .row-actions, .row-links, .dash, .empty-state {
+    max-width: 820px; margin-left: auto; margin-right: auto;
+  }
+  .dash-rings { max-width: none; }                                   /* fills .dash */
+  .tiles { grid-template-columns: repeat(3, 1fr); max-width: none; } /* fills .dash */
+  .dish-hero { max-height: 48vh; }
+
+  .tabs { width: min(620px, calc(100% - 48px)); }
+  .sheet-panel { max-width: 660px; }
+  .chat-body { max-width: 940px; }
+}
+
+@media (min-width: 1280px) {
+  .screen { max-width: 1280px; }
+  .cards { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+  .rows { grid-template-columns: 1fr 1fr 1fr; }
+}
+
+/* ---------------------------------------------------------------- reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  body::before, body::after, .dish-hero img, .tab-fab { animation: none !important; }
+  * , *::before, *::after { transition: none !important; }
+}
+
+/* ---------------------------------------------------------------- global voice agent */
+.agent { position: fixed; right: 18px; z-index: 33;
+  bottom: calc(100px + env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+.agent-fab { width: 62px; height: 62px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--grad-mint); color: #05231A;
+  box-shadow: 0 14px 30px -8px rgba(47,190,139,.7); transition: transform .15s ease; }
+.agent-fab:active { transform: scale(.92); }
+.agent-fab.is-live { background: var(--coral); color: #fff; animation: apulse 1.2s ease-in-out infinite; }
+@keyframes apulse { 50% { box-shadow: 0 0 0 14px rgba(239,84,104,.15); } }
+.agent-card { max-width: 280px; background: rgba(255,255,255,.94); backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,.6); border-radius: 18px; padding: 12px 14px; box-shadow: var(--lift); }
+.agent-state { font-weight: 750; font-size: 14px; display: inline-flex; align-items: center; gap: 8px; }
+.agent-state::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--ink-faint); }
+.agent-state.is-listening::before { background: var(--mint); animation: vpulse 1s ease-in-out infinite; }
+.agent-state.is-thinking::before { background: var(--sky); animation: vpulse 1s ease-in-out infinite; }
+.agent-state.is-speaking::before { background: var(--peach); animation: vpulse .7s ease-in-out infinite; }
+.agent-said { margin: 6px 0 0; font-size: 14px; color: var(--ink-soft); line-height: 1.4; }
+@media (prefers-reduced-motion: reduce) { .agent-fab, .agent-state::before { animation: none !important; } }
+
+/* ================================================================ WIDE RECIPE SHEET
+   The recipe opens near-full-width: photo + what-you-need on the LEFT, the
+   method on the RIGHT. On a phone the two simply stack. */
+.recipe-cols { display: block; }
+
+@media (min-width: 860px) {
+  .sheet-panel.is-recipe-wide {
+    width: min(1180px, 96vw); max-width: min(1180px, 96vw);
+    max-height: 92dvh;
+  }
+  .recipe-cols {
+    display: grid;
+    grid-template-columns: 5fr 6fr;
+    gap: 8px;
+    align-items: start;
+  }
+  /* Each column scrolls on its own, so the steps stay put while you read the
+     ingredients and vice-versa. */
+  .recipe-cols .recipe-left,
+  .recipe-cols .recipe-right { max-height: calc(92dvh - 92px); overflow-y: auto; }
+  .recipe-cols .recipe-right { border-left: 1px solid var(--line); }
+  .recipe-cols .recipe-right .sheet-body { padding-top: 22px; }
+  .is-recipe-wide .dish-bleed { max-height: 40dvh; border-radius: 0; }
+}
+
+/* The right column's method, roomier on a wide screen */
+.recipe-right .steps { margin-top: 6px; }
+
+/* Wide generator / draft / link sheets, to match */
+@media (min-width: 860px) {
+  .sheet-panel.is-wide { width: min(900px, 94vw); max-width: min(900px, 94vw); }
+}
+
+/* ================================================================ COOK — live bar */
+.cook-live {
+  display: flex; align-items: center; gap: 10px;
+  margin: 0 var(--gap, 16px) 4px; padding: 10px 14px;
+  border-radius: 14px; font-weight: 600; font-size: 15px;
+  background: var(--mint-wash); color: var(--mint-deep);
+}
+.cook-live-dot { width: 11px; height: 11px; border-radius: 50%; background: var(--mint); flex: none; }
+.cook-live.is-listening .cook-live-dot { animation: vpulse 1s ease-in-out infinite; }
+.cook-live.is-thinking  .cook-live-dot { background: var(--sky);   animation: vpulse 1s ease-in-out infinite; }
+.cook-live.is-speaking  .cook-live-dot { background: var(--peach); animation: vpulse .7s ease-in-out infinite; }
+.cook-end { display: block; margin: 14px auto 4px; color: var(--coral); font-weight: 650; }
+
+/* ================================================================ COOK — minimised dock
+   A pulsating green pill: tap it, or say "go back to the cooking recipe". */
+.cook-dock {
+  position: fixed; z-index: 34; left: 50%; transform: translateX(-50%);
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  display: flex; align-items: center; gap: 8px;
+}
+.cook-dock-btn {
+  position: relative; display: inline-flex; align-items: center; gap: 10px;
+  padding: 12px 18px 12px 16px; border-radius: 999px;
+  background: var(--grad-mint); color: #05231A; font-weight: 700; font-size: 15px;
+  box-shadow: 0 16px 34px -10px rgba(47,190,139,.75);
+}
+.cook-dock-btn .cook-dock-text b { font-weight: 800; }
+.cook-dock-pulse {
+  position: absolute; inset: 0; border-radius: 999px; pointer-events: none;
+  box-shadow: 0 0 0 0 rgba(47,190,139,.55);
+  animation: dockpulse 1.6s ease-out infinite;
+}
+@keyframes dockpulse {
+  0%   { box-shadow: 0 0 0 0 rgba(47,190,139,.55); }
+  70%  { box-shadow: 0 0 0 18px rgba(47,190,139,0); }
+  100% { box-shadow: 0 0 0 0 rgba(47,190,139,0); }
+}
+.cook-dock-x {
+  width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center;
+  background: rgba(255,255,255,.92); color: var(--ink); box-shadow: var(--lift);
+}
+@media (max-width: 460px) {
+  .cook-dock-btn { font-size: 14px; padding: 11px 14px; }
+  .cook-dock-text { max-width: 56vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cook-dock-pulse, .cook-live-dot { animation: none !important; }
+}
+
+/* ================================================================ COOK — mood background
+   A slow aurora of coloured light behind the cooking screen, tinted to the
+   dish's cuisine. Toggle it from the ✨ button in the header, or say "turn off
+   the animation". */
+.cook { --m1: var(--mint); --m2: var(--peach); --m3: var(--sky); --m-base: #F7F4EE; }
+.cook[data-mood="italian"] { --m1:#E7452F; --m2:#2FBE7A; --m3:#F2C744; --m-base:#FBF3EE; }
+.cook[data-mood="french"]  { --m1:#C9A227; --m2:#7FA06B; --m3:#B0553F; --m-base:#FAF6EE; }
+.cook[data-mood="spanish"] { --m1:#E8791E; --m2:#E4B429; --m3:#C43A2B; --m-base:#FBF3E8; }
+.cook[data-mood="asian"]   { --m1:#17A67C; --m2:#E23B2E; --m3:#2E7BB4; --m-base:#F1F6F3; }
+.cook[data-mood="mexican"] { --m1:#3FB56B; --m2:#E8B02A; --m3:#E2542F; --m-base:#F6F5EC; }
+.cook[data-mood="indian"]  { --m1:#E68A1E; --m2:#C43A2B; --m3:#2F9E6E; --m-base:#FAF2E8; }
+
+.cook.bg-on { background: var(--m-base); }
+/* content rides above the light */
+.cook > .cook-head, .cook > .cook-live, .cook > .cook-switch, .cook > .cook-body,
+.cook > .cook-stage, .cook > .cook-ask { position: relative; z-index: 1; }
+
+/* ---------------------------------------------------------------- step-focused cook mode */
+.cook-solo { display: flex; flex-direction: column; }
+.cook-stage {
+  flex: 1; overflow-y: auto;
+  width: min(760px, 92vw); margin: 0 auto; padding: 8px 4px 20px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.cook-stage .cook-ing-toggle { align-self: flex-start; }
+.cook-stepno { margin: 0; font-weight: 800; letter-spacing: .12em; text-transform: uppercase;
+  font-size: 12px; color: var(--ink-faint); }
+.kpts { display: flex; flex-wrap: wrap; gap: 8px; }
+.kpt { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 999px;
+  font-weight: 650; font-size: 14px; background: rgba(255,255,255,.8); backdrop-filter: blur(6px);
+  border: 1px solid rgba(255,255,255,.6); }
+.kpt-heat { color: var(--tomato); }
+.kpt-cue { color: var(--ink-soft); font-style: italic; }
+.kpt-time { color: var(--ink-soft); }
+.cook-do { font-size: clamp(30px, 5vw, 46px); line-height: 1.08; letter-spacing: -0.02em; margin: 2px 0 0; }
+.cook-solo .cook-why { font-size: 17px; color: var(--ink-soft); margin: 2px 0 0; }
+.cook-pic { border-radius: var(--r-lg); max-height: 34vh; width: auto; align-self: flex-start; box-shadow: var(--lift); }
+
+/* the chef's short spoken answer, as a caption — not a chat log */
+.cook-answer { display: flex; gap: 10px; align-items: flex-start;
+  background: rgba(255,255,255,.9); backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,.6); border-radius: 16px; padding: 12px 14px;
+  box-shadow: var(--lift); max-width: 640px; }
+.cook-answer-ic { flex: 0 0 auto; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--mint-wash); color: var(--mint-deep); }
+.cook-answer p { margin: 0; font-size: 16px; line-height: 1.45; color: var(--ink); }
+
+.cook-solo .cook-tools { display: flex; flex-wrap: wrap; gap: 8px; }
+.cook-solo .cook-nav { display: flex; gap: 12px; margin-top: 4px; }
+.cook-solo .cook-nav .btn { flex: 1; }
+.cook-end { align-self: center; color: var(--coral); font-weight: 650; margin-top: 2px; }
+
+/* slim ask bar pinned at the bottom */
+.cook-ask { display: flex; gap: 10px; align-items: center;
+  width: min(760px, 92vw); margin: 0 auto;
+  padding: 10px 4px calc(10px + env(safe-area-inset-bottom)); }
+.cook-ask-input { flex: 1; height: 52px; border-radius: 16px; border: 0; padding: 0 16px; font-size: 17px;
+  background: rgba(255,255,255,.92); box-shadow: 0 2px 10px -4px rgba(30,42,33,.15), inset 0 0 0 2px rgba(47,190,139,.12); }
+.cook-ask-input:focus { outline: none; box-shadow: 0 6px 18px -6px rgba(47,190,139,.35), inset 0 0 0 2px var(--mint); }
+
+@media (min-width: 900px) {
+  .cook-stage { width: min(820px, 84vw); }
+  .cook-ask { width: min(820px, 84vw); }
+}
+
+.cook-bg { position: absolute; inset: 0; overflow: hidden; z-index: 0; pointer-events: none; }
+.cook-bg span {
+  position: absolute; border-radius: 50%; filter: blur(60px);
+  opacity: .5; mix-blend-mode: multiply; will-change: transform;
+}
+.cook-bg span:nth-child(1) { width: 60vmax; height: 60vmax; left: -12vmax; top: -16vmax;
+  background: radial-gradient(circle, var(--m1), transparent 70%); animation: cbA 16s ease-in-out infinite alternate; }
+.cook-bg span:nth-child(2) { width: 56vmax; height: 56vmax; right: -14vmax; top: 8vmax;
+  background: radial-gradient(circle, var(--m2), transparent 70%); animation: cbB 21s ease-in-out infinite alternate; }
+.cook-bg span:nth-child(3) { width: 52vmax; height: 52vmax; left: 18vmax; bottom: -20vmax;
+  background: radial-gradient(circle, var(--m3), transparent 70%); animation: cbC 26s ease-in-out infinite alternate; }
+@keyframes cbA { to { transform: translate(13vmax, 9vmax) scale(1.22) rotate(32deg); } }
+@keyframes cbB { to { transform: translate(-15vmax, 7vmax) scale(1.16) rotate(-26deg); } }
+@keyframes cbC { to { transform: translate(9vmax, -11vmax) scale(1.26) rotate(22deg); } }
+
+/* Global off-switch (button or "turn off the animation") stops every motion. */
+body.anim-off::before, body.anim-off::after { animation: none !important; }
+.anim-off .cook-bg { display: none; }
+
+@media (prefers-reduced-motion: reduce) { .cook-bg span { animation: none !important; } }

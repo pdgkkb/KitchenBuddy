@@ -4,7 +4,7 @@
    exists to remove. The dashboard is below the fold on purpose; the dish
    is the answer, the charts are the reasons. */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import * as E from "../core/engine.js";
 import { parse } from "../core/intent.js";
 import * as api from "../lib/api.js";
@@ -72,6 +72,10 @@ export default function Today() {
 
   const pick = surprised || proposal.main;
   const date = new Date().toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" });
+
+  /* Tell the rest of the app what tonight's dish is, so "let's cook" by voice
+     can open it even from another screen. */
+  useEffect(() => { if (pick?.recipe?.id) ui.setFeatured?.(pick.recipe.id); }, [pick?.recipe?.id]); // eslint-disable-line
 
   return (
     <div className="screen">

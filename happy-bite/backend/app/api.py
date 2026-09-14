@@ -3,7 +3,13 @@
 Nothing here is load-bearing for the kitchen itself: tonight's dish,
 stock, expiry, receipts and shopping run in the browser and keep working
 when this server is off. This is the "extra" layer — the assistant — and
-the proxy that keeps the keys out of the browser."""
+the proxy that keeps the keys out of the browser.
+
+The chat can now *act*. When the model calls a kitchen tool, the request is
+validated in `actions.normalize` and streamed to the browser as an `action`
+event; the browser applies it to its own store. The server never holds the
+household's data — it only relays the instruction.
+"""
 
 import json
 import re
@@ -13,8 +19,10 @@ from fastapi import APIRouter, HTTPException, Request, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import prompts
+from . import actions, prompts
+from .actions import KITCHEN_TOOLS
 from .catalog import id_list, ingredients, recipe_book
+from .config import settings
 from .importer import ImportErrorPublic, fetch, plain_recipe, read_page
 from .recipes import RECIPE_SCHEMA, clean_recipe
 
@@ -104,8 +112,10 @@ async def status(request: Request) -> dict[str, Any]:
         "chat": bool(llm), "recipes": bool(llm),
         "images": bool(svc(request, "images")),
         "voice": bool(svc(request, "speech")),
+        "actions": bool(llm),
         "model": llm.name if llm else None,
         "local": bool(llm and "(local)" in llm.name),
+        "wakeWord": settings().wake_word or None,
     }
 
 
@@ -222,12 +232,20 @@ async def chat(body: ChatIn, request: Request):
             except Exception as e:  # noqa: BLE001
                 yield sse({"type": "status", "text": f"Couldn't read that page ({type(e).__name__})."})
 
-        system = prompts.chef_system(body.context.model_dump(), attachment)
+        system = prompts.chef_system(body.context.model_dump(), attachment,
+                                     ids=id_list(known), customs=body.custom)
+        msgs = [m.model_dump() for m in body.messages]
         try:
-            async for text in llm.stream(system, [m.model_dump() for m in body.messages]):
-                if await request.is_disconnected():
-                    return
-                yield sse({"type": "delta", "text": text})
+            if hasattr(llm, "chat_actions"):
+                async for ev in llm.chat_actions(system, msgs, KITCHEN_TOOLS, actions.normalize, known):
+                    if await request.is_disconnected():
+                        return
+                    yield sse(ev)
+            else:
+                async for text in llm.stream(system, msgs):
+                    if await request.is_disconnected():
+                        return
+                    yield sse({"type": "delta", "text": text})
         except Exception as e:  # noqa: BLE001
             yield sse({"type": "error", "message": f"The assistant stopped ({type(e).__name__})."})
             return
@@ -256,7 +274,8 @@ async def images(body: ImageIn, request: Request):
 async def speech_say(body: SpeakIn, request: Request):
     sp = need(request, "speech", "Server voice")
     try:
-        return Response(await sp.say(body.text, body.voice), media_type="audio/mpeg")
+        return Response(await sp.say(body.text, body.voice),
+                        media_type=getattr(sp, "mime", "audio/mpeg"))
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Voice failed ({type(e).__name__}).") from None
 

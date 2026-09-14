@@ -1,7 +1,11 @@
 /* Happy Bite — the household's data and every change made to it.
 
    The only place that mutates. Screens read `k` and call actions; nothing
-   else writes to storage. All of it lives on this device. */
+   else writes to storage. All of it lives on this device.
+
+   KitchenBuddy reaches this file through `useApplyAction` (state/actions.jsx),
+   which is why the assistant can only do things a person could already do by
+   tapping — it calls the very same methods. */
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { INGREDIENTS, RECIPES, STARTING_STOCK } from "../data/index.js";
@@ -20,7 +24,7 @@ const DEFAULT_PEOPLE = [
 const PERSISTED = {
   people: DEFAULT_PEOPLE, diners: null, stock: null, planned: [], bought: [], wishlist: [],
   corrections: {}, customs: {}, taste: E.EMPTY_TASTE, filters: {}, myRecipes: [], history: [],
-  prefs: { speakReplies: false, readSteps: false }
+  prefs: { speakReplies: false, readSteps: false, bgAnim: true }
 };
 
 async function load() {
@@ -38,6 +42,9 @@ async function load() {
   Object.assign(INGREDIENTS, s.customs);
   return { ...s, receipt: null, ready: true };
 }
+
+const round2 = (n) => Math.round(n * 100) / 100;
+const slug = (name) => "u_" + String(name).toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 24);
 
 export function KitchenProvider({ children }) {
   const [k, setK] = useState({ ready: false });
@@ -110,6 +117,56 @@ export function KitchenProvider({ children }) {
         set({ stock });
       },
 
+      /* ---- Live changes KitchenBuddy makes on your say-so. Same rules as a tap. ---- */
+
+      /* "I used 100 g of milk" -> delta negative; "found more" -> positive. */
+      adjustStock(id, delta) {
+        const stock = get().stock.map(a => ({ ...a }));
+        const item = stock.find(a => a.id === id);
+        if (item) {
+          item.qty = round2(Math.max(0, item.qty + delta));
+          set({ stock: stock.filter(a => a.qty > 0) });
+        } else if (delta > 0) {
+          stock.push({ id, qty: round2(delta), unit: E.ref(id).unit, bought: E.isoDay() });
+          set({ stock });
+        }
+      },
+
+      /* Something bought or found, with a quantity. `daysLeft` sets an explicit
+         use-by; otherwise the shelf-life estimate applies. */
+      addStockItem(id, qty, unit, daysLeft) {
+        const stock = get().stock.map(a => ({ ...a }));
+        const patch = { bought: E.isoDay() };
+        if (typeof daysLeft === "number") {
+          patch.expires = E.isoDay(new Date(E.today().getTime() + daysLeft * E.DAY));
+        }
+        const item = stock.find(a => a.id === id);
+        if (item) { item.qty = round2(item.qty + qty); Object.assign(item, patch); }
+        else stock.push({ id, qty: round2(qty), unit: unit || E.ref(id).unit, ...patch });
+        set({ stock });
+      },
+
+      setExpiry(id, days) {
+        const expires = E.isoDay(new Date(E.today().getTime() + days * E.DAY));
+        set({ stock: get().stock.map(a => a.id === id ? { ...a, expires } : a) });
+      },
+
+      /* Teach the kitchen a new ingredient. Mirrors createProduct but takes an
+         explicit id/unit/shelfLife (the ones KitchenBuddy or a receipt supply). */
+      addCustom({ id, name, category, unit, shelfLife }) {
+        const iid = id || slug(name);
+        const product = { name, category: category || "other", unit: unit || "g", shelfLife: shelfLife || 14 };
+        INGREDIENTS[iid] = product;
+        set({ customs: { ...get().customs, [iid]: product } });
+        return iid;
+      },
+
+      addToShopping(ids) {
+        const wishlist = [...get().wishlist];
+        for (const id of ids) if (!wishlist.includes(id)) wishlist.push(id);
+        set({ wishlist });
+      },
+
       setReceipt: (receipt) => set({ receipt }),
 
       resolveLine(index, id, rejected = false) {
@@ -121,7 +178,7 @@ export function KitchenProvider({ children }) {
       },
 
       createProduct(name, category) {
-        const id = "u_" + name.toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 24);
+        const id = slug(name);
         const product = { name, category, unit: "g", shelfLife: 14 };
         INGREDIENTS[id] = product;
         set({ customs: { ...get().customs, [id]: product } });

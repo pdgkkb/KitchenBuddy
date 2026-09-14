@@ -1,5 +1,9 @@
 /* The recipe, before you start: what you need for this table, how you
-   want it done, the method at a glance — then cooking mode. */
+   want it done, the method at a glance — then cooking mode.
+
+   On a wide screen it opens as a near-full-width two-column sheet: the photo,
+   the details and everything you need on the LEFT, the method steps on the
+   RIGHT. On a phone the two stack. "Start cooking" takes it full-screen. */
 
 import { useState } from "react";
 import * as E from "../core/engine.js";
@@ -10,7 +14,9 @@ import { DishImage } from "../components/Chrome.jsx";
 import { Icon } from "../components/Icon.jsx";
 import { DishTags, nameOf } from "../screens/Today.jsx";
 
-export function RecipeView({ recipe: r, serves, choices, setChoices }) {
+/* Everything about the dish EXCEPT the method: what you need, seasoning,
+   options, ideas. This is the left column on a wide screen. */
+export function RecipeDetails({ recipe: r, serves, choices, setChoices }) {
   const { k, addWish } = useKitchen();
   const ui = useUI();
   const held = new Map(k.stock.map(a => [a.id, a]));
@@ -89,7 +95,14 @@ export function RecipeView({ recipe: r, serves, choices, setChoices }) {
           </div>
         );
       })}
+    </>
+  );
+}
 
+/* The method — the right column on a wide screen. */
+export function RecipeMethod({ recipe: r }) {
+  return (
+    <>
       <h3 className="sub-head">Method</h3>
       <ol className="steps">
         {r.steps.map((st, i) => (
@@ -107,6 +120,12 @@ export function RecipeView({ recipe: r, serves, choices, setChoices }) {
       </ol>
     </>
   );
+}
+
+/* Both, one after another — used where a single column is wanted (the draft
+   sheet). The two-column recipe sheet places the halves side by side itself. */
+export function RecipeView(props) {
+  return <><RecipeDetails {...props} /><RecipeMethod recipe={props.recipe} /></>;
 }
 
 export function PhotoButton({ recipe, onDone }) {
@@ -140,19 +159,28 @@ export default function RecipeSheet({ id }) {
   return (
     <div className="sheet recipe-sheet">
       <div className="sheet-scrim" onClick={ui.closeSheet} />
-      <section className="sheet-panel is-bleed" role="dialog" aria-modal="true" aria-label={r.name}>
-        <DishImage recipe={r} className="dish-photo dish-bleed">
-          <button className="icon-btn on-photo close-photo" onClick={ui.closeSheet} aria-label="Close"><Icon name="close" /></button>
-          <div className="dish-overlay">
-            <h2 className="dish-name">{r.name}</h2>
-            <DishTags recipe={r} />
+      <section className="sheet-panel is-bleed is-recipe-wide" role="dialog" aria-modal="true" aria-label={r.name}>
+        <div className="recipe-cols">
+          <div className="recipe-left">
+            <DishImage recipe={r} className="dish-photo dish-bleed">
+              <button className="icon-btn on-photo close-photo" onClick={ui.closeSheet} aria-label="Close"><Icon name="close" /></button>
+              <div className="dish-overlay">
+                <h2 className="dish-name">{r.name}</h2>
+                <DishTags recipe={r} />
+              </div>
+              <PhotoButton recipe={r} onDone={(url) => setPhoto(r.id, url)} />
+            </DishImage>
+            <div className="sheet-body">
+              {r.description && <p className="lead">{r.description}</p>}
+              {r.source && <p className="sub-note">From <a href={r.source.url} target="_blank" rel="noreferrer">{r.source.site}</a>. Adapted for your kitchen; the original is the authority.</p>}
+              <RecipeDetails recipe={r} serves={serves} choices={choices} setChoices={setChoices} />
+            </div>
           </div>
-          <PhotoButton recipe={r} onDone={(url) => setPhoto(r.id, url)} />
-        </DishImage>
-        <div className="sheet-body">
-          {r.description && <p className="lead">{r.description}</p>}
-          {r.source && <p className="sub-note">From <a href={r.source.url} target="_blank" rel="noreferrer">{r.source.site}</a>. Adapted for your kitchen; the original is the authority.</p>}
-          <RecipeView recipe={r} serves={serves} choices={choices} setChoices={setChoices} />
+          <div className="recipe-right">
+            <div className="sheet-body">
+              <RecipeMethod recipe={r} />
+            </div>
+          </div>
         </div>
         <footer className="sheet-foot">
           <button className="btn btn-ghost" onClick={() => { togglePlanned(r.id); ui.say(planned ? "Taken off the plan" : "Planned — missing items are on the shopping list"); }}>

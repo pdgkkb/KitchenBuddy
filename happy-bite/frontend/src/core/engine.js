@@ -13,10 +13,15 @@ export const isoDay = (d = new Date()) => {
 };
 
 /* ---------- Expiry ----------
-   An estimate from purchase date plus a shelf life — not a printed use-by
-   date. Wrong in detail, right enough to decide what gets used first. */
+   Two ways to know when something goes off. If the household (or KitchenBuddy,
+   reading a use-by date aloud) set an explicit `expires` day, that wins. Failing
+   that, an estimate from purchase date plus a shelf life — wrong in detail,
+   right enough to decide what gets used first. */
 
 export function daysLeft(item) {
+  if (item.expires) {
+    return Math.round((new Date(item.expires).getTime() - today().getTime()) / DAY);
+  }
   const r = ref(item.id);
   if (!r.shelfLife) return 999;
   const end = new Date(item.bought).getTime() + r.shelfLife * DAY;
