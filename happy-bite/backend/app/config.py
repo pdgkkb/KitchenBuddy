@@ -25,6 +25,33 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_base_url: str = ""                        # e.g. http://localhost:11434/v1 for Ollama
 
+    # Qwen 3.5 and its relatives are hybrid-reasoning models: they can write a
+    # <think> block before the answer. The Small series (0.8B-9B) has it off by
+    # default and that is what we want — a person at the hob wants the answer,
+    # not the working. Sent as chat_template_kwargs, which Ollama and llama.cpp
+    # read and every other OpenAI-compatible server ignores.
+    llm_think: bool = False
+    llm_temperature: float = 0.7                     # Qwen's own non-thinking recommendation
+    llm_top_p: float = 0.8                           # with thinking on, use 1.0 / 0.95
+    llm_num_ctx: int = 0                             # 0 = leave the server's own default alone
+
+    # One attempt, generously long. The default client retries twice, so a
+    # model that needs four minutes looked like a twelve-minute hang before it
+    # admitted defeat — the user watched 437 seconds of that.
+    llm_timeout: float = 600.0
+
+    # Send the non-standard fields (thinking mode, keep_alive, num_ctx) at all.
+    # Ollama reads them. LM Studio VALIDATES the request body and answers 400 —
+    # which is what "BadRequestError" was. The code now drops them by itself on
+    # a 400, so this is a manual override rather than something you should need.
+    llm_extras: bool = True
+
+    # The floor on how much room a structured reply gets. A full recipe is
+    # roughly 700 tokens of JSON; the old 1800 was comfortable until a reasoning
+    # model started spending the first thousand on its own deliberations and the
+    # recipe ran out of room halfway through step six.
+    llm_json_tokens: int = 3000
+
     image_provider: str = "openai"                   # openai | local | none
     image_model: str = "gpt-image-1"                 # local: a HF id, e.g. stabilityai/sd-turbo
 

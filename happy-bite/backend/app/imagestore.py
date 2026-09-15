@@ -21,7 +21,7 @@ import json
 import time
 from pathlib import Path
 
-from . import prompts
+from . import photoqueue, prompts
 
 MAX_PER_RECIPE = 1
 
@@ -94,11 +94,18 @@ class RecipeImages:
             return {"urls": [], "pending": False, "want": 0}
         want = 1
         have = self.get(rid)
-        if self.images and len(have["urls"]) < want and rid not in self._busy:
+        missing = len(have["urls"]) < want
+        if self.images and missing and rid not in self._busy:
             self._busy.add(rid)
             self._enqueue({"rid": rid, "recipe": recipe, "want": want,
                            "have": len(have["urls"])})
             have["pending"] = True
+        elif missing:
+            # No picture model in this process — by design, see photoqueue.py.
+            # Write down what was asked for so `tools/make_photos.py` can paint
+            # it later, when it isn't fighting the language model for memory.
+            photoqueue.add(self.dir, {**recipe, "id": rid})
+            have["queued"] = True
         have["want"] = want
         return have
 

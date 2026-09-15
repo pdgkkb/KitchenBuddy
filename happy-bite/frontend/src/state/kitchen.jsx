@@ -24,7 +24,13 @@ const DEFAULT_PEOPLE = [
 const PERSISTED = {
   people: DEFAULT_PEOPLE, diners: null, stock: null, planned: [], bought: [], wishlist: [],
   corrections: {}, customs: {}, taste: E.EMPTY_TASTE, filters: {}, myRecipes: [], history: [],
-  prefs: { speakReplies: false, readSteps: false, bgAnim: true }
+  prefs: { speakReplies: false, readSteps: false, bgAnim: true },
+  /* What they can cook ON. null means NOBODY HAS SAID — which is not the same
+     as owning nothing, and the difference matters: on null the app says nothing
+     about equipment at all rather than telling someone their kitchen is missing
+     an oven they never mentioned. */
+  equipment: null,
+  adaptations: {}
 };
 
 async function load() {
@@ -222,7 +228,27 @@ export function KitchenProvider({ children }) {
         set({ prefs: { ...get().prefs, photos: { ...(get().prefs.photos || {}), [id]: url } } });
       },
 
-      setPref: (key, value) => set({ prefs: { ...get().prefs, [key]: value } })
+      setPref: (key, value) => set({ prefs: { ...get().prefs, [key]: value } }),
+
+      /* ---- What you cook with, and the ways round it ---- */
+
+      setEquipment: (ids) => set({ equipment: [...new Set(ids)] }),
+
+      /* Keyed by recipe AND the exact equipment it was written for (see
+         core/equipment.js adaptKey), so buying an air fryer retires yesterday's
+         "no, you can't" instead of serving it forever after it stopped being
+         true. Capped, because these are whole answers and storage is a phone's. */
+      saveAdaptation(key, adaptation) {
+        const all = { ...get().adaptations, [key]: { ...adaptation, at: Date.now() } };
+        const keys = Object.keys(all).sort((a, b) => (all[b].at || 0) - (all[a].at || 0));
+        set({ adaptations: Object.fromEntries(keys.slice(0, 40).map(x => [x, all[x]])) });
+      },
+
+      forgetAdaptation(key) {
+        const all = { ...get().adaptations };
+        delete all[key];
+        set({ adaptations: all });
+      }
     };
   }, []);
 

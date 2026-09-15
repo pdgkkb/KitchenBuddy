@@ -41,6 +41,13 @@ How to answer:
   read aloud while someone's hands are busy — give the answer, not a paragraph,
   and don't restate the whole step back to them.
 - For substitutions, prefer what is already in their kitchen (listed below).
+- What they can cook ON matters as much as what they cook WITH. Where their
+  equipment is listed below, that list is the whole truth: never tell them to
+  use an oven, a grill or an air fryer that isn't on it. If the recipe needs one
+  and they haven't got it, say so straight, then offer the way round — the same
+  dish done in a pan, a microwave, whatever they do have — and say honestly what
+  will be different about the result. If there is no good way round, say that
+  instead of inventing one; a ruined dinner is worse than a changed plan.
 - Food safety is never softened: give safe core temperatures for poultry, pork,
   minced meat and fish when it matters, and say plainly when to throw
   something away.
@@ -136,6 +143,12 @@ def chef_system(ctx: dict, attachment: dict | None, ids: str = "", customs: dict
         if isinstance(step, int) and 0 <= step < len(steps):
             parts.append(f"They are on step {step + 1} of {len(steps)}: \"{steps[step].get('do')}\". "
                          "Questions like 'is this right?' or 'how long?' are about this step.")
+    equipment = ctx.get("equipment")
+    if equipment:
+        from .adapt import EQUIPMENT as KIT
+        parts.append("Their kitchen equipment — this list is complete, they have "
+                     "NOTHING else:\n"
+                     + "\n".join(f"- {KIT.get(e, e)}" for e in equipment))
     if ctx.get("serves"):
         parts.append(f"Cooking for {ctx['serves']}.")
     if attachment:
@@ -148,11 +161,23 @@ def chef_system(ctx: dict, attachment: dict | None, ids: str = "", customs: dict
     return "\n\n".join(parts)
 
 
+# How much of the reference corpus to paste into a prompt.
+#
+# This was 12 000 characters of up to eight full recipes — roughly three
+# thousand tokens the model had to READ before writing its first word, every
+# single time. On a 9B running on a laptop that is minutes, and it bought
+# almost nothing: the corpus is there for inspiration, and a title with its
+# ingredient list inspires about as well as the full method does.
+RAG_CHARS = 900
+RAG_EACH = 320
+
+
 def _retrieved_text(recipes: list[dict]) -> str:
-    return "\n\n".join(
-        f"- {r.get('title')}: ingredients: {r.get('ingredients')}; method: {r.get('instructions')}"
-        for r in recipes[:8]
-    )[:12000]
+    out = []
+    for r in recipes[:2]:
+        line = f"- {r.get('title')}: {r.get('ingredients')}"
+        out.append(line[:RAG_EACH])
+    return "\n".join(out)[:RAG_CHARS]
 
 
 def recipe_system(id_list: str, stock_lines: str, serves: int,
@@ -243,3 +268,85 @@ def step_image_prompt(name: str, step: str, cue: str | None) -> str:
             f"The moment shown: {step}"
             + (f" — it should look like this: {cue}." if cue else ".")
             + " 16-bit game art, warm kitchen palette, clear chunky shapes, no text, no faces.")
+
+
+# ------------------------------------------------ cooking it with what you own
+
+def adapt_system(owned: list[str], missing: list[str], serves: int, id_list: str) -> str:
+    """Rewrite this dish for the equipment in front of them — or refuse.
+
+    The refusal is the part that needs the most pressure in the prompt. A model
+    asked "can I do this roast in a microwave?" will answer yes and produce
+    something; the person then wastes a shoulder of lamb rather than ten
+    seconds. So "no" is named as a correct, expected answer twice, and the
+    schema gives it its own field rather than leaving it to be read out of prose.
+    """
+    from .adapt import EQUIPMENT as KIT
+
+    have = "\n".join(f"- {KIT.get(e, e)}" for e in owned) or "- nothing recorded"
+    lacks = ", ".join(KIT.get(m, m) for m in missing)
+
+    return f"""You are a working cook, asked whether a recipe can be made in a
+particular kitchen and how. You are NOT rewriting the recipe: the author's
+version stays as it is, and you describe the way round it, step by step.
+
+The equipment in this kitchen. This list is COMPLETE — they own nothing else:
+{have}
+
+{"What the recipe wants and they have not got: " + lacks if lacks else "They appear to have what the recipe asks for; they are asking about another way to cook it."}
+
+Cooking for {serves}.
+Valid ingredient ids, with their unit: {id_list}
+
+How to answer:
+- "possible" is "yes", "partly", or "no".
+- **"no" is a correct answer and you must use it when it is true.** Some dishes
+  cannot be done without the kit they need: a slow roast in a microwave, a
+  proper bake with no oven, anything that depends on dry surrounding heat. Say
+  so in one plain sentence and stop. Do NOT invent a method you would not cook
+  yourself. Being told to plan something else costs a minute; a confident wrong
+  answer costs the dinner.
+- "partly" is for a dish that comes out different but still good — say what is
+  lost.
+- Where it IS possible, give one entry in "changes" for every step that changes,
+  and ONLY those steps. Number them with the step numbers given below. Leave
+  unchanged steps out entirely.
+- Each change is one action, in the imperative, the way the recipe writes them.
+  Give a real "heat" for the new equipment ("Air fryer 190 °C", "Medium-high"),
+  real minutes, and a "cue" — what to see, hear or smell — because a timing
+  carried over from other equipment is a guess and a cue is not.
+- Timings change with the method and you must change them. An air fryer runs
+  hotter and faster than an oven; a pan browns but does not cook through; a
+  microwave steams rather than browns. Do not copy the original minutes across.
+- "watch" is the honest list of how the result will differ: browning, crust,
+  texture, evenness. Always give at least one for "yes" or "partly". A cook who
+  is warned is not disappointed.
+- "using" and "insteadOf" take the equipment ids from the list above, not prose.
+- Ingredients stay as the recipe has them. If the way round genuinely needs a
+  different ingredient, say so in "why" on that step; do not silently swap one.
+- Reply in the language the question is asked in."""
+
+
+def adapt_user(recipe: dict, question: str) -> str:
+    """The recipe with its steps numbered the way the answer must refer to them."""
+    steps = []
+    for n, s in enumerate(recipe.get("steps") or [], 1):
+        bits = [f"{n}. {s.get('do')}"]
+        if s.get("heat"):
+            bits.append(f"[heat: {s['heat']}]")
+        if isinstance(s.get("minutes"), (int, float)) and s["minutes"] >= 3:
+            bits.append(f"[{int(s['minutes'])} min]")
+        if s.get("cue"):
+            bits.append(f"[until {s['cue']}]")
+        steps.append(" ".join(bits))
+
+    needs = ", ".join(f"{n.get('id')} {n.get('qty')}" for n in (recipe.get("needs") or []))
+    extras = ", ".join(recipe.get("extras") or [])
+
+    return (f"Dish: {recipe.get('name')}"
+            + (f" ({recipe.get('cuisine')})" if recipe.get("cuisine") else "")
+            + f"\nServes {recipe.get('serves')}, about {recipe.get('minutes')} minutes.\n"
+            + (f"Ingredients: {needs}\n" if needs else "")
+            + (f"Also: {extras}\n" if extras else "")
+            + "\nThe method as written:\n" + "\n".join(steps)
+            + f"\n\nThey ask: {question}")

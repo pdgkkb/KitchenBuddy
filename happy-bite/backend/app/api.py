@@ -67,6 +67,10 @@ class ChatContext(BaseModel):
     step: int | None = None
     serves: int | None = None
     stock: list[StockLine] = Field(default_factory=list)
+    # What they can cook ON. Empty means "they haven't said", not "they own
+    # nothing" — see prompts.chef_system, which only mentions equipment when
+    # this list has something in it.
+    equipment: list[str] = Field(default_factory=list, max_length=40)
 
 
 class ChatIn(Known):
@@ -159,9 +163,28 @@ async def recipes_import(body: ImportIn, request: Request):
 
 # ---------------------------------------------------------------- generate
 
-@router.post("/recipes/generate")
-async def recipes_generate(body: GenerateIn, request: Request):
+# The stages the browser narrates. They are the real boundaries of the work
+# below and nothing else — the old interface guessed at four phases on a
+# stopwatch, which is why it sat on "Checking the ingredients" for twenty
+# seconds while the model was in fact still writing the method, and why that
+# check appeared to happen AFTER reading the kitchen when it is the last thing
+# that happens, not the first. If a stage here stops being a real step in this
+# function, delete it here too rather than leaving it to decorate the wait.
+STAGES_IDEAS = ["kitchen", "corpus", "ideas"]
+STAGES_METHOD = ["kitchen", "corpus", "method", "check"]
+
+
+async def _write_recipe(body: GenerateIn, request: Request):
+    """The work, as an async generator of ("stage", key) then ("done", payload).
+
+    One implementation, two doors: the plain JSON endpoint drains it and returns
+    the payload, the SSE endpoint relays each stage as it is reached. Keeping it
+    in one place is the point — a progress report that drifts from the work is
+    worse than no progress report.
+    """
     llm = need(request, "llm", "The assistant")
+
+    yield "stage", "kitchen"
     known = ingredients(body.custom)
     stock = ", ".join(f"{s.id} ({s.qty:g} {s.unit or ''}"
                       + (f", {s.daysLeft} days left" if s.daysLeft is not None and s.daysLeft <= 3 else "") + ")"
@@ -170,20 +193,36 @@ async def recipes_generate(body: GenerateIn, request: Request):
     if body.conversation:
         talk = "\n".join(f"{m.role}: {m.content}" for m in body.conversation[-12:])
         user = f"Turn what we agreed in this conversation into the recipe.\n\n{talk}\n\nExtra wishes: {user}"
+
+    yield "stage", "corpus"
     rag = svc(request, "rag")
-    retrieved = await rag.search(user + " " + stock, 2) if rag else []
+    # One reference recipe, not two. Every one of these is prompt the model must
+    # read before it writes anything, and on a local 9B reading is the expensive
+    # part — see RAG_CHARS in prompts.py.
+    retrieved = await rag.search(user + " " + stock, 1) if rag else []
+
+    yield "stage", "ideas" if body.options else "method"
     try:
         if body.options:
             raw = await llm.json(prompts.recipe_ideas_system(id_list(known), stock, body.serves, retrieved), user, RECIPE_IDEAS_SCHEMA, 900)
         else:
             raw = await llm.json(prompts.recipe_system(id_list(known), stock, body.serves, retrieved), user, RECIPE_SCHEMA, 1800)
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"The assistant didn't come back ({type(e).__name__}).") from None
+        # The server's own sentence, not just the exception's class name. A
+        # local server that refuses a field answers 400 with a line naming it,
+        # and that line is the entire diagnosis — "BadRequestError" on its own
+        # sent us hunting for a timeout that wasn't there.
+        raise HTTPException(502, f"The assistant didn't come back ({type(e).__name__}): "
+                                 f"{str(e)[:300]}") from None
+
     if not body.options:
+        yield "stage", "check"
         recipe = clean_recipe(raw, known, origin="assistant")
         if not recipe:
             raise HTTPException(502, "The assistant's recipe didn't hold together. Try again.")
-        return {"recipe": recipe}
+        yield "done", {"recipe": recipe}
+        return
+
     ideas = []
     for item in (raw or {}).get("recipes") or []:
         if not isinstance(item, dict) or not isinstance(item.get("name"), str):
@@ -198,7 +237,44 @@ async def recipes_generate(body: GenerateIn, request: Request):
         })
     if len(ideas) < 2:
         raise HTTPException(502, "The assistant couldn't make enough distinct ideas. Try again.")
-    return {"recipes": ideas[:2]}
+    yield "done", {"recipes": ideas[:2]}
+
+
+@router.post("/recipes/generate")
+async def recipes_generate(body: GenerateIn, request: Request):
+    """The plain answer, unchanged in shape — anything that isn't the new
+    browser still gets exactly what it got before."""
+    async for kind, payload in _write_recipe(body, request):
+        if kind == "done":
+            return payload
+    raise HTTPException(502, "The assistant stopped without an answer.")
+
+
+@router.post("/recipes/generate/stream")
+async def recipes_generate_stream(body: GenerateIn, request: Request):
+    """The same work, narrated.
+
+    Events: {"type":"stage","key":...} as each real boundary is crossed, then
+    one {"type":"result", ...} or {"type":"error","message":...}. The error has
+    to travel in the body rather than as a status code: by the time the model
+    fails, the response headers are long gone.
+    """
+    async def events():
+        try:
+            async for kind, payload in _write_recipe(body, request):
+                if await request.is_disconnected():
+                    return
+                if kind == "stage":
+                    yield sse({"type": "stage", "key": payload})
+                else:
+                    yield sse({"type": "result", **payload})
+        except HTTPException as e:
+            yield sse({"type": "error", "message": str(e.detail)})
+        except Exception as e:  # noqa: BLE001
+            yield sse({"type": "error", "message": f"The assistant stopped ({type(e).__name__})."})
+
+    return StreamingResponse(events(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 # ---------------------------------------------------------------- understand

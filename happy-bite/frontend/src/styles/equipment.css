@@ -1,0 +1,186 @@
+/* Happy Bite — what you cook with, and the way round when you haven't got it.
+
+   Written against the app's own custom properties so it inherits the theme, and
+   kept in its own file so the feature can be removed as easily as it was added.
+   Imported by the two components that use it (AdaptPanel, EquipmentSheet) so
+   each works wherever it is dropped, rather than relying on a parent. */
+
+/* ------------------------------------------------- picking your equipment */
+
+.equip-grid {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+}
+
+.equip {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 12px 13px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg, 16px);
+  background: var(--surface, #fff);
+  color: var(--ink);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.equip:hover { border-color: var(--mint, #2f9e74); }
+
+.equip.is-on {
+  border-color: var(--mint, #2f9e74);
+  background: var(--mint-wash, rgba(47, 158, 116, 0.08));
+}
+
+.equip-tick {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  border: 2px solid var(--line);
+  font-weight: 800;
+  font-size: 14px;
+  color: var(--mint-deep, #1f7a56);
+}
+
+.equip.is-on .equip-tick {
+  border-color: var(--mint, #2f9e74);
+  background: var(--mint, #2f9e74);
+  color: #fff;
+}
+
+.equip-text { min-width: 0; display: grid; gap: 2px; }
+.equip-name { font-weight: 650; }
+.equip-note { font-size: 12px; color: var(--ink-soft); }
+
+/* ------------------------------------------------------ the way-round panel */
+
+.adapt {
+  margin: 18px 0 4px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg, 16px);
+  background: var(--surface, #fff);
+  box-shadow: var(--lift);
+}
+
+.adapt-quiet {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 14px 0 0;
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+}
+
+.adapt-first-text { margin: 0 0 12px; font-size: 0.94rem; }
+
+.adapt-need {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-weight: 650;
+  color: var(--tomato, #c4553a);
+}
+
+.adapt-sub { margin: 0 0 14px; font-size: 0.88rem; color: var(--ink-soft); }
+
+.adapt-error {
+  margin: 12px 0 0;
+  font-size: 0.86rem;
+  color: var(--tomato, #c4553a);
+}
+
+.adapt-edit {
+  display: inline-block;
+  margin-top: 14px;
+  font-size: 0.84rem;
+}
+
+.adapt-ask { margin-top: 14px; }
+
+/* ---- the answer --------------------------------------------------------- */
+
+.adapt-result {
+  border-left: 4px solid var(--line);
+  padding-left: 14px;
+}
+
+.adapt-result.is-yes    { border-left-color: var(--mint, #2f9e74); }
+.adapt-result.is-partly { border-left-color: var(--peach, #e0a85c); }
+.adapt-result.is-no     { border-left-color: var(--tomato, #c4553a); }
+
+.adapt-verdict { margin: 0; font-size: 1rem; line-height: 1.45; }
+
+.adapt-lead {
+  display: block;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  margin-bottom: 4px;
+  opacity: 0.8;
+}
+
+.is-yes    .adapt-lead { color: var(--mint-deep, #1f7a56); }
+.is-partly .adapt-lead { color: var(--peach-deep, #a9752f); }
+.is-no     .adapt-lead { color: var(--tomato, #c4553a); }
+
+.adapt-swap { margin: 8px 0 0; font-size: 0.88rem; color: var(--ink-soft); }
+
+.adapt-head-steps {
+  margin: 18px 0 8px;
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint, rgba(0, 0, 0, 0.45));
+}
+
+.adapt-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+
+.adapt-step { display: flex; gap: 12px; }
+
+.adapt-stepno {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--mint-wash, rgba(47, 158, 116, 0.1));
+  color: var(--mint-deep, #1f7a56);
+  font-weight: 800;
+  font-size: 13px;
+}
+
+.adapt-was {
+  margin: 0 0 3px;
+  font-size: 0.8rem;
+  color: var(--ink-faint, rgba(0, 0, 0, 0.45));
+  text-decoration: line-through;
+}
+
+.adapt-do { margin: 0; font-weight: 600; line-height: 1.4; }
+
+.adapt-kpts { display: flex; flex-wrap: wrap; gap: 7px; margin: 8px 0 0; }
+
+.adapt-why { margin: 6px 0 0; font-size: 0.85rem; color: var(--ink-soft); }
+
+.adapt-watch ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 0.88rem; }
+
+.adapt-actions { margin-top: 18px; align-items: center; }
+
+@media (max-width: 420px) {
+  .equip-grid { grid-template-columns: 1fr; }
+  .adapt { padding: 14px 12px; }
+}

@@ -104,3 +104,9 @@ training/   optional Qwen3-8B QLoRA fine-tuning kit
 - The AI/training pieces were written and unit-tested here but the
   fine-tuning itself has not been run end-to-end (no GPU in the build
   environment).
+
+
+## When you want photos : 
+cd backend && source .venv/bin/activate
+       python tools/make_photos.py --list
+       python tools/make_photos.py

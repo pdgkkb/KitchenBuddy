@@ -39,5 +39,17 @@ def ingredients(extra: dict | None = None) -> dict[str, dict]:
 
 
 def id_list(known: dict[str, dict]) -> str:
-    """`courgette (g), egg (u), …` — the unit matters, or quantities drift."""
-    return ", ".join(f"{iid} ({ing.get('unit', 'g')})" for iid, ing in known.items())
+    """`u_goat = Goat's cheese (g), egg = Egg (u), …`
+
+    The NAME beside it, and that is not decoration. This used to hand the
+    model bare ids and units — `goat (g)` — and a model that cannot see what
+    an id MEANS has to guess from the spelling. It guessed meat, wrote "add
+    the goat and cook four minutes a side", and the household's goat's CHEESE
+    went into a hot pan. Every quiet wrong-ingredient error in this app came
+    through that gap: the id was valid, so nothing downstream could object.
+
+    The list gets longer. On a 128K context that costs nothing worth having.
+    """
+    return ", ".join(
+        f"{iid} = {ing.get('name', iid)} ({ing.get('unit', 'g')})"
+        for iid, ing in known.items())

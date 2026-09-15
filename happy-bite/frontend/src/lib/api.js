@@ -43,6 +43,53 @@ export async function status() {
 }
 
 export const generateRecipe = (body) => post("/api/recipes/generate", body, 120000);
+
+/* Server-sent events over a POST, read by hand — EventSource can't POST. Shared
+   by the chat and by recipe writing, which is the only reason the recipe wait
+   can narrate itself honestly rather than guessing on a stopwatch. */
+export async function readEvents(res, onEvent) {
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let cut;
+    while ((cut = buffer.indexOf("\n\n")) >= 0) {
+      const chunk = buffer.slice(0, cut);
+      buffer = buffer.slice(cut + 2);
+      for (const line of chunk.split("\n")) {
+        if (line.startsWith("data: ")) {
+          try { onEvent(JSON.parse(line.slice(6))); } catch { /* a torn line; skip */ }
+        }
+      }
+    }
+  }
+}
+
+/* The same request as generateRecipe, but the server says where it has got to.
+   `onStage` is called with the key of each phase as it is actually reached —
+   see STAGES_IDEAS / STAGES_METHOD in backend/app/api.py. Resolves with the
+   same body the plain endpoint returns, so callers can fall back to it. */
+export async function generateRecipeStream(body, onStage, signal) {
+  const res = await call("/api/recipes/generate/stream", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body), signal
+  }, 300000);
+  let result = null;
+  let failed = null;
+  await readEvents(res, (ev) => {
+    if (ev.type === "stage") onStage?.(ev.key);
+    else if (ev.type === "result") result = ev;
+    else if (ev.type === "error") failed = ev.message;
+  });
+  if (failed) throw new ApiError(failed, 502);
+  if (!result) throw new ApiError("The assistant stopped without an answer.", 502);
+  return result;
+}
+
+export const adaptRecipe = (body) => post("/api/recipes/adapt", body, 180000);
 export const importLink = (body) => post("/api/recipes/import", body, 60000);
 export const understand = (text) => post("/api/understand", { text }, 20000);
 export const makeImage = (body) => post("/api/images", body, 120000);
@@ -75,22 +122,5 @@ export async function chat(body, onEvent, signal) {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body), signal
   }, 180000);
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let cut;
-    while ((cut = buffer.indexOf("\n\n")) >= 0) {
-      const chunk = buffer.slice(0, cut);
-      buffer = buffer.slice(cut + 2);
-      for (const line of chunk.split("\n")) {
-        if (line.startsWith("data: ")) {
-          try { onEvent(JSON.parse(line.slice(6))); } catch { /* a torn line; skip */ }
-        }
-      }
-    }
-  }
+  await readEvents(res, onEvent);
 }

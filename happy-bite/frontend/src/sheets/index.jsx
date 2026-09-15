@@ -8,6 +8,7 @@ import { TableSheet, HouseholdSheet, ProfileSheet } from "./People.jsx";
 import { AdjustSheet, QuantitySheet, VerifySheet } from "./Kitchen.jsx";
 import { CreateSheet, LinkSheet, DraftSheet } from "./Create.jsx";
 import { ReviewSheet, ServerSheet } from "./Misc.jsx";
+import EquipmentSheet from "./Equipment.jsx";
 import { nameOf } from "../screens/Today.jsx";
 
 const SHEETS = {
@@ -23,7 +24,8 @@ const SHEETS = {
   link:       [LinkSheet, () => "Add from a link"],
   draft:      [DraftSheet, () => "New recipe", true],
   review:     [ReviewSheet, () => "How was it?"],
-  server:     [ServerSheet, () => "Assistant and voice"]
+  server:     [ServerSheet, () => "Assistant and voice"],
+  equipment:  [EquipmentSheet, () => "What I cook with"]
 };
 
 export default function Sheets() {

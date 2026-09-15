@@ -217,15 +217,33 @@ export default function VoiceAgent() {
      the tap button is always the reliable way in. Not armed when the agent is
      already listening through that same recogniser — one at a time. */
   useEffect(() => {
-    if (hidden || active || !ui.server.voice) { stopWake(); return; }
-    if (wake.wakeSupported() !== "ok") return;
+    /* The wake word never armed once, and the reason was the condition that
+       used to sit on the line below: `!ui.server.voice`. Nothing in wake.js
+       talks to the server — it is the browser's own continuous recogniser from
+       start to finish — so that test demanded Whisper be running in order to
+       use the one part of the voice stack that cannot use Whisper. It is the
+       same mistake this file's own header describes fixing for the mic button
+       in point 2, left in place four lines further down. The button worked.
+       The phrase never had a chance.
+
+       Now it is a setting, and deliberately off until asked for: arming this
+       holds the microphone open, and in Chrome the browser streams what it
+       hears to Google to recognise it. That is a choice to hand to the person
+       standing in the kitchen, not one to make quietly on their behalf —
+       wake.js says as much in its own header. Settings → Assistant and voice
+       → Hands-free. */
+    if (hidden || active || !k.prefs?.handsFree) { stopWake(); return; }
     wakeRef.current = wake.startWakeWord({
       phrase: ui.server.wakeWord || "hey chef",
       onWake: () => startRef.current(),
-      onError: () => {},                                 // stay quiet; the button still works
+      /* Not silent any more either. startWakeWord reports a refused microphone
+         and an unsupported browser through this, and swallowing both made a
+         recogniser that never started look exactly like a phrase that never
+         triggers — with nothing on screen to tell them apart. */
+      onError: (msg) => { if (msg) uiRef.current.say(msg); },
     });
     return () => stopWake();
-  }, [hidden, active, ui.server.voice, ui.server.wakeWord]);
+  }, [hidden, active, k.prefs?.handsFree, ui.server.wakeWord]);
 
   /* If the chat/cook screen opens or the app leaves, drop any live turn. */
   useEffect(() => { if (hidden && activeRef.current) stop(); }, [hidden, stop]);

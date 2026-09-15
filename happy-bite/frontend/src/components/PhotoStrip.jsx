@@ -27,16 +27,22 @@ export default function PhotoStrip({ recipe, auto = true, onPrimary }) {
   const { setPhoto } = useKitchen();
   const [urls, setUrls] = useState([]);
   const [pending, setPending] = useState(false);
+  const [queued, setQueued] = useState(false);
   const [error, setError] = useState("");
   const [nonce, setNonce] = useState(0);       // bumping this re-runs the whole effect
   const timer = useRef(null);
 
   const id = recipe && recipe.id;
-  const on = ui.server.images;
+  /* Two different questions, and conflating them was a bug: can the server
+     PAINT a picture right now, and are there pictures to SHOW? With the model
+     moved out to tools/make_photos.py the answer to the first is no and to the
+     second is often yes — and the strip used to hide itself entirely, so a
+     kitchen full of painted dishes looked empty. */
+  const canMake = ui.server.images;
   const start = auto || nonce > 0;
 
   useEffect(() => {
-    if (!on || !id) return undefined;
+    if (!id) return undefined;
     let alive = true;
     let tries = 0;
 
@@ -45,6 +51,7 @@ export default function PhotoStrip({ recipe, auto = true, onPrimary }) {
       const list = res.urls || [];
       setUrls(list);
       setPending(!!res.pending);
+      setQueued(!!res.queued && !list.length);
       /* The first picture becomes the dish's photo, so the hero image and the
          cards in the book fill in on their own. Later ones are offered, not
          imposed — swapping it under someone as they read would be rude. */
@@ -66,7 +73,7 @@ export default function PhotoStrip({ recipe, auto = true, onPrimary }) {
       .catch((e) => alive && setError(e.message || "Pictures aren't available."));
 
     return () => { alive = false; clearTimeout(timer.current); };
-  }, [id, on, nonce]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [id, canMake, nonce]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Throw the set away and paint another. The effect above does the work — this
      only clears the old files and bumps the nonce, so there is exactly one
@@ -79,8 +86,13 @@ export default function PhotoStrip({ recipe, auto = true, onPrimary }) {
     setNonce(n => n + 1);
   };
 
-  if (!on || !id) return null;
+  if (!id) return null;
   if (error) return <p className="sub-note photo-strip-note">{error}</p>;
+  if (queued && !urls.length) return (
+    <p className="sub-note photo-strip-note">
+      Queued for the next photo run — <code>python tools/make_photos.py</code> in backend/.
+    </p>
+  );
   if (!urls.length && !pending) return null;
 
   return (
@@ -105,7 +117,7 @@ export default function PhotoStrip({ recipe, auto = true, onPrimary }) {
           {pending ? "Painting the rest…"
                    : urls.length > 1 ? "Tap one to use it" : "One picture so far"}
         </span>
-        {!pending && <button type="button" className="link" onClick={again}>New set</button>}
+        {!pending && canMake && <button type="button" className="link" onClick={again}>New set</button>}
       </div>
     </div>
   );

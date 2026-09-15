@@ -62,6 +62,12 @@ export default function Kitchen() {
         <ExpiryChart bins={bins} nameOf={nameOf} />
       </section>
 
+      <button className="btn btn-small btn-ghost" style={{ marginBottom: 14 }}
+              onClick={() => ui.openSheet("equipment")}>
+        <Icon name="list" size={20} />
+        {k.equipment ? `What I cook with (${k.equipment.length})` : "What I cook with"}
+      </button>
+
       <input className="field" type="search" placeholder="Search the kitchen" value={q}
              onChange={(e) => setQ(e.target.value)} />
 

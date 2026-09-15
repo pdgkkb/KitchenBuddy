@@ -63,6 +63,8 @@ RECIPE_SCHEMA = {
                     "heat": {"type": "string", "description": "Low | Medium-low | Medium | Medium-high | High | Oven 200 °C"},
                     "cue": {"type": "string", "description": "What to look for: 'oil shimmers'"},
                     "minutes": {"type": "number"},
+                    "uses": {"type": "array", "items": {"type": "string"},
+                             "description": "Ingredient ids that go IN at this step, from this recipe's own needs and seasoning. Empty for a step that adds nothing."},
                 },
                 "required": ["do", "minutes"],
             },
@@ -111,11 +113,124 @@ RULES = """Rules for the recipe:
 - Seasonings (salt, spices, sauces) go in "seasoning"; "essential": true only if
   the dish fails without it.
 - One action per step. If it needs "and then", split it. Four to eight steps.
+- A step may only name ingredients that are in THIS recipe. Never mention a
+  food the recipe does not contain: a rice dish does not talk about pasta.
+- Each id is given as `id = Name (unit)`. Write about what the id MEANS, not
+  what it is spelled like. `u_goat = Goat's cheese` is a cheese: it is
+  crumbled over at the end, never seared four minutes a side.
+- Oils, butter for frying and vinegars: a few spoonfuls, and "flexible": true.
+  Never hundreds of millilitres.
+- Quantities a person could eat: roughly 150-250 g a head of the main
+  ingredient, not a kilo.
+- "uses" lists the ids that go into the pan AT that step, so the cook knows
+  what to reach for. Nothing that was added earlier.
+- For anything seared, fried or grilled, give the time PER SIDE in "do":
+  "four minutes on the first side, three on the second". A single total is
+  useless to somebody standing over a pan.
 - Every hob or oven step gets a "heat" and, where it helps, a "cue" — what you
   see, hear or smell. Cues beat timers: "oil shimmers", "edges going golden",
   "a drop of water skitters".
 - "why" only where skipping it ruins the dish. Plain words, one line.
 - Quantities for the number of people asked for (default 4)."""
+
+
+# A seasoning is whatever the CATALOGUE says it is, and the catalogue decides
+# in both directions. The old rule only moved one way — a seasoning filed under
+# needs was moved across — so a whole vegetable the model called a seasoning
+# stayed there. That is how garlic, onions and tomatoes ended up in the spice
+# list. A model's opinion about what a seasoning is carries no weight here.
+def _is_seasoning(iid: str, known: dict) -> bool:
+    return known.get(iid, {}).get("category") == "seasoning"
+
+
+# The most of a seasoning one person could plausibly eat. A 4B model guesses
+# grams badly: it asked for 380 g of salt for three people, which is not a
+# seasoning mistake, it is a medical one. Above this the number is dropped and
+# the app says "to taste" — honest about not knowing, rather than confident and
+# wrong. 8 g of salt a head is already generous; 8 g of paprika is a lot.
+SEASON_PER_PERSON = {"g": 8.0, "ml": 10.0, "cl": 1.0, "l": 0.05, "u": 1.0}
+
+# The same treatment for ordinary ingredients, which needed it just as badly:
+# 1.7 kg of courgettes for three people, and 150 cl — a litre and a half — of
+# olive oil. Generous rather than mean, because a cap that fires on a correct
+# recipe is worse than no cap: 400 g a head of any one thing is a large plate.
+NEED_PER_PERSON = {"g": 400.0, "ml": 400.0, "cl": 40.0, "l": 0.4, "u": 4.0}
+
+# Things you pour rather than weigh. No sane recipe uses 400 ml of olive oil
+# for four, and the model reaches for that number constantly, so these get a
+# much tighter ceiling and are marked flexible — the app already knows how to
+# say "a splash". Matched on the name because the catalogue has no field for
+# it; crude, and still right far more often than 150 cl of oil.
+POUR_WORDS = ("oil", "vinegar", "huile", "vinaigre")
+POUR_PER_PERSON = {"g": 20.0, "ml": 20.0, "cl": 2.0, "l": 0.02, "u": 1.0}
+
+
+def _need_qty(q: float, ing: dict, serves: int) -> tuple[float, bool]:
+    unit = ing.get("unit", "g")
+    name = str(ing.get("name", "")).lower()
+    table = POUR_PER_PERSON if any(w in name for w in POUR_WORDS) else NEED_PER_PERSON
+    cap = table.get(unit, 400.0) * max(1, serves)
+    return (round(q, 2), False) if q <= cap else (round(cap, 2), True)
+
+
+def _season_qty(q: float, unit: str, serves: int) -> tuple[float, bool]:
+    cap = SEASON_PER_PERSON.get(unit, 8.0) * max(1, serves)
+    return (round(q, 2), False) if q <= cap else (round(cap, 2), True)
+
+
+def _slugish(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(s).lower()).strip("_")
+
+
+def _as_known_id(text: str, known: dict) -> str | None:
+    """Is this "extra" actually an ingredient id, or the name of one?
+
+    The model was told to use ids for anything in the list and plain shopper's
+    text for anything else. It did neither: it wrote `u_mozarella`, `goat` and
+    `courgette` into extras — ids, for ingredients that ARE in the kitchen.
+    Printed as written, the app showed a household "u_mozarella" on its
+    shopping list, and the mozzarella they had just cooked with never counted
+    as an ingredient they had used.
+    """
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    if raw in known:
+        return raw
+    slug = _slugish(raw)
+    for candidate in (slug, f"u_{slug}"):
+        if candidate in known:
+            return candidate
+    for iid, ing in known.items():
+        if _slugish(ing.get("name", "")) == slug:
+            return iid
+    return None
+
+
+def _contradictions(steps: list[dict], used: set[str], known: dict) -> list[str]:
+    """Steps that name an ingredient this recipe does not contain.
+
+    "Boil rice in salted water" followed by "cooking the pasta separately
+    ensures it absorbs the sauce" is one dish described as two, and no amount
+    of prompting reliably stops a small model doing it. It is never silently
+    repaired — a rewritten method is a method nobody wrote — but it is said out
+    loud, where the cook can see it before the pan is hot.
+    """
+    names = {}
+    for ing in known.values():
+        nm = str(ing.get("name", "")).strip()
+        if len(nm) >= 4 and " " not in nm:
+            names[nm.lower()] = nm
+    out: list[str] = []
+    for i, st in enumerate(steps, 1):
+        for word in set(re.findall(r"[a-zA-Z]{4,}", (st.get("do", "") + " " + st.get("why", "")))):
+            low = word.lower()
+            hit = names.get(low) or names.get(low[:-1] if low.endswith("s") else low)
+            if hit and hit.lower() not in used:
+                line = f"step {i} mentions {hit.lower()}"
+                if line not in out:
+                    out.append(line)
+    return out[:4]
 
 
 def _text(v, n: int) -> str | None:
@@ -138,34 +253,71 @@ def clean_recipe(raw: dict, known: dict[str, dict], origin: str = "assistant") -
             or not isinstance(raw.get("steps"), list):
         return None
 
-    needs = []
-    for n in raw.get("needs") or []:
-        if not isinstance(n, dict):
+    serves_n = int(max(1, min(12, _num(raw.get("serves")) or 4)))
+
+    # Everything the model offered, from either list, sorted by what the
+    # CATALOGUE says each thing is rather than by which array it arrived in.
+    offered: list[tuple[dict, bool]] = [
+        (n, False) for n in raw.get("needs") or [] if isinstance(n, dict)
+    ] + [
+        (s, True) for s in raw.get("seasoning") or [] if isinstance(s, dict)
+    ]
+
+    adjusted: list[str] = []
+    needs, seasoning, seen = [], [], set()
+    moved_to_needs = 0
+    for item, came_as_seasoning in offered:
+        iid, q = item.get("id"), _num(item.get("qty"))
+        if iid not in known or iid in seen or not q or q <= 0:
             continue
-        q = _num(n.get("qty"))
-        if n.get("id") in known and q and q > 0 and known[n["id"]].get("category") != "seasoning":
-            item = {"id": n["id"], "qty": round(min(q, 20000), 2)}
-            if _text(n.get("prep"), 60):
-                item["prep"] = _text(n.get("prep"), 60)
-            if n.get("flexible") is True:
-                item["flexible"] = True
-            needs.append(item)
-    needs = needs[:14]
+        seen.add(iid)
+        if _is_seasoning(iid, known):
+            qty, capped = _season_qty(q, known[iid].get("unit", "g"), serves_n)
+            entry = {"id": iid, "qty": qty, "essential": item.get("essential") is True}
+            if capped:
+                # The number was not believable, so the app will not print one.
+                entry["toTaste"] = True
+            seasoning.append(entry)
+            continue
+        if came_as_seasoning:
+            moved_to_needs += 1
+        qty, trimmed = _need_qty(q, known[iid], serves_n)
+        entry = {"id": iid, "qty": qty}
+        if _text(item.get("prep"), 60):
+            entry["prep"] = _text(item.get("prep"), 60)
+        if item.get("flexible") is True or trimmed:
+            entry["flexible"] = True
+        if trimmed:
+            # Recorded, not hidden. The number the model wrote was not
+            # believable, and the cook is told which ones were brought down.
+            adjusted.append(f"{known[iid].get('name', iid)}: "
+                            f"{round(q, 2)} -> {qty} {known[iid].get('unit', 'g')}")
+        needs.append(entry)
+    needs, seasoning = needs[:14], seasoning[:10]
 
-    seasoning = []
-    for s in raw.get("seasoning") or []:
-        q = _num(s.get("qty")) if isinstance(s, dict) else None
-        if isinstance(s, dict) and s.get("id") in known and q and q > 0:
-            seasoning.append({"id": s["id"], "qty": round(min(q, 500), 2),
-                              "essential": s.get("essential") is True})
-    # A seasoning the model filed under needs is moved, not lost.
-    for n in raw.get("needs") or []:
-        if isinstance(n, dict) and known.get(n.get("id"), {}).get("category") == "seasoning" \
-                and not any(s["id"] == n["id"] for s in seasoning) and (_num(n.get("qty")) or 0) > 0:
-            seasoning.append({"id": n["id"], "qty": round(_num(n["qty"]), 2), "essential": False})
-    seasoning = seasoning[:10]
+    # An "extra" that is really an id belongs with the ingredients, not on a
+    # list of things to buy. No quantity is invented for it: qty 0 with
+    # flexible set is the app's way of saying "you need this, the recipe never
+    # said how much", and the panel prints no number rather than a made-up one.
+    extras = []
+    for raw_extra in raw.get("extras") or []:
+        text = _text(raw_extra, 80)
+        if not text:
+            continue
+        iid = _as_known_id(text, known)
+        if iid and iid not in seen:
+            seen.add(iid)
+            if _is_seasoning(iid, known):
+                seasoning.append({"id": iid, "qty": 0, "essential": False, "toTaste": True})
+            else:
+                needs.append({"id": iid, "qty": 0, "flexible": True})
+        elif not iid:
+            extras.append(text)
+    needs, seasoning, extras = needs[:16], seasoning[:12], extras[:12]
 
-    extras = [t for t in (_text(e, 80) for e in raw.get("extras") or []) if t][:12]
+    if moved_to_needs:
+        print(f"recipes: {moved_to_needs} thing(s) the model called seasoning are not, "
+              "by the catalogue — moved to the ingredients.")
 
     if not needs and not extras:
         return None
@@ -179,6 +331,13 @@ def clean_recipe(raw: dict, known: dict[str, dict], origin: str = "assistant") -
         for key, n in (("why", 200), ("heat", 24), ("cue", 90)):
             if _text(st.get(key), n):
                 step[key] = _text(st.get(key), n)
+        # What goes in the pan now. Only ids this recipe actually contains —
+        # a step that claims to add something the recipe never bought is the
+        # same invention as an invented id, and gets the same treatment.
+        in_recipe = {x["id"] for x in needs} | {x["id"] for x in seasoning}
+        uses = [u for u in (st.get("uses") or []) if isinstance(u, str) and u in in_recipe]
+        if uses:
+            step["uses"] = list(dict.fromkeys(uses))[:8]
         steps.append(step)
     steps = steps[:14]
     if len(steps) < 2:
@@ -202,6 +361,16 @@ def clean_recipe(raw: dict, known: dict[str, dict], origin: str = "assistant") -
         "steps": steps,
         "origin": origin,
     }
+    used_names = {str(known[x["id"]].get("name", "")).lower()
+                  for x in needs + seasoning if x["id"] in known}
+    used_names |= {e.lower() for e in extras}
+    if adjusted:
+        out["adjusted"] = adjusted[:6]
+        print("recipes: quantities brought down to something edible — " + "; ".join(adjusted))
+    wrong = _contradictions(steps, used_names, known)
+    if wrong:
+        out["contradictions"] = wrong
+        print("recipes: the method contradicts the ingredients — " + "; ".join(wrong))
     if extras:
         out["extras"] = extras
     if _text(raw.get("description"), 200):

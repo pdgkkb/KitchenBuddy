@@ -25,7 +25,13 @@ export default function ChatScreen() {
   const [convo, setConvo] = useState(false);
   const [vState, setVState] = useState("");           // listening | thinking | speaking | ""
   const serves = k.diners.length || 2;
-  const context = useCallback(() => ({ mode: "general", serves, stock: stockForServer(k.stock) }), [k.stock, serves]);
+  /* Equipment rides along so "I've got a pan and a microwave but no oven" is
+     answered against the list rather than guessed at. `|| []` because null
+     means they never said, and the prompt only mentions equipment when the
+     list has something in it. */
+  const context = useCallback(() => ({
+    mode: "general", serves, stock: stockForServer(k.stock), equipment: k.equipment || []
+  }), [k.stock, serves, k.equipment]);
   const chat = useChat(context, GREETING, applyAction);
   const sendRef = useRef(chat.send); sendRef.current = chat.send;
   const convoRef = useRef(false);

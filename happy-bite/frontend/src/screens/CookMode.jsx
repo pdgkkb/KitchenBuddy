@@ -19,12 +19,16 @@ import * as voice from "../lib/voice.js";
 import { parseCook } from "../lib/command.js";
 import { useKitchen, stockForServer } from "../state/kitchen.jsx";
 import { useUI } from "../state/ui.jsx";
+import { useApplyAction } from "../state/actions.jsx";
 import { Icon } from "../components/Icon.jsx";
 import { useChat } from "../components/Chat.jsx";
+import * as sq from "../lib/speechqueue.js";
+import "../styles/method.css";
 
 export default function CookMode() {
   const { k, finishCooking, setPref, saveRecipe } = useKitchen();
   const ui = useUI();
+  const applyAction = useApplyAction();
   const { recipe, serves } = ui.cooking;
   const [i, setI] = useState(0);
   const [showIngredients, setShowIngredients] = useState(false);
@@ -44,9 +48,13 @@ export default function CookMode() {
   const useServer = ui.server.voice;
 
   const context = useCallback(() => ({
-    mode: "cooking", recipe, step: iRef.current, serves, stock: stockForServer(k.stock)
-  }), [recipe, serves, k.stock]);
-  const chat = useChat(context, null);
+    mode: "cooking", recipe, step: iRef.current, serves, stock: stockForServer(k.stock),
+    equipment: k.equipment || []
+  }), [recipe, serves, k.stock, k.equipment]);
+  /* This screen used to pass no onAction at all, so cooking mode was the one
+     place the chef could not actually change anything — "I've used the last of
+     the milk", mid-recipe, went nowhere. */
+  const chat = useChat(context, null, applyAction);
   const sendRef = useRef(chat.send); sendRef.current = chat.send;
 
   useEffect(() => () => voice.stopSpeaking(), []);
@@ -127,7 +135,8 @@ export default function CookMode() {
     liveRef.current = false; setLive(false); setVstate("");
     try { listenRef.current?.stop(); } catch { /* */ }
     listenRef.current = null;
-    voice.stopSpeaking();
+    sq.cancel();                    // the queue holds the sentences still to come
+    voice.stopSpeaking();           // this only ever stopped the one being said
   }
 
   useEffect(() => {
@@ -214,8 +223,8 @@ export default function CookMode() {
               const want = E.scale(n.qty, serves, recipe.serves, r.unit);
               const it = held.get(n.id);
               const have = it ? E.convert(it.qty, it.unit || r.unit, r.unit, r) : 0;
-              return <li key={n.id} className={"ing" + (have < want ? " is-short" : "")}>
-                <span className="ing-qty">{E.formatQty(want, r.unit)}</span>
+              return <li key={n.id} className={"ing" + (have < want && want > 0 ? " is-short" : "")}>
+                <span className="ing-qty">{want > 0 ? E.formatQty(want, r.unit) : "some"}</span>
                 <span className="ing-name">{r.name}{n.prep && <small>{n.prep}</small>}</span></li>;
             })}
             {(recipe.extras || []).map(x => <li key={x} className="ing"><span className="ing-qty">·</span><span className="ing-name">{x}</span></li>)}
@@ -232,6 +241,26 @@ export default function CookMode() {
             {step.heat && <span className="kpt kpt-heat"><Icon name="flame" size={16} /> {step.heat}</span>}
             {step.cue && <span className="kpt kpt-cue">Watch for: {step.cue.toLowerCase()}</span>}
             {step.minutes >= 3 && <span className="kpt kpt-time"><Icon name="clock" size={16} /> about {step.minutes} min</span>}
+          </div>
+        )}
+
+        {/* What to reach for, with the amount already scaled to this table.
+            The step said "add the goat meat"; nobody standing at the hob wants
+            to scroll back up to a list to find out how much that was. */}
+        {step.uses?.length > 0 && (
+          <div className="cook-now">
+            <p className="cook-now-label">Add now</p>
+            <ul>
+              {step.uses.map(id => {
+                const r = E.ref(id);
+                const from = recipe.needs.find(n => n.id === id)
+                          || (recipe.seasoning || []).find(s => s.id === id);
+                const want = from?.qty ? E.scale(from.qty, serves, recipe.serves, r.unit) : 0;
+                return <li key={id}>
+                  <b>{want > 0 ? E.formatQty(want, r.unit) : ""}</b> {r.name}
+                </li>;
+              })}
+            </ul>
           </div>
         )}
 

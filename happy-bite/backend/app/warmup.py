@@ -23,10 +23,20 @@ import httpx
 
 SILENT = "Say the single word: ready."
 
+# What the warm-up actually found, so /api/health/models can report it instead
+# of leaving you to read the log. A dict rather than app.state because warm_llm
+# is called with the settings alone and this keeps its signature.
+#
+#   reachable: True  — it answered
+#              False — it refused or the server isn't there
+#              None  — nothing tried yet (cloud model, or still starting)
+LLM_STATUS: dict = {"reachable": None, "why": None, "model": None}
+
 
 async def warm_llm(s) -> None:
     """One tiny generation, with a long keep_alive so it stays resident."""
     base = (getattr(s, "openai_base_url", "") or "").rstrip("/")
+    LLM_STATUS["model"] = getattr(s, "llm_model", None)
     if not base or getattr(s, "llm_provider", "") != "openai":
         return                       # cloud models have nothing to preload
     body = {
@@ -34,17 +44,32 @@ async def warm_llm(s) -> None:
         "messages": [{"role": "user", "content": SILENT}],
         "max_tokens": 4,
         "stream": False,
-        # Ollama reads this; other OpenAI-compatible servers ignore unknown keys.
+        # Ollama reads these; other OpenAI-compatible servers ignore unknown keys.
         "keep_alive": getattr(s, "llm_keep_alive", "1h"),
+        "chat_template_kwargs": {"enable_thinking": bool(getattr(s, "llm_think", False))},
     }
     key = getattr(s, "openai_api_key", "") or "none"
     try:
-        async with httpx.AsyncClient(timeout=180) as http:
+        async with httpx.AsyncClient(timeout=300) as http:
             r = await http.post(f"{base}/chat/completions", json=body,
                                 headers={"Authorization": f"Bearer {key}"})
-        print("warmup: model", s.llm_model, "loaded" if r.status_code < 400 else
-              f"replied {r.status_code}")
+        if r.status_code < 400:
+            LLM_STATUS.update(reachable=True, why=None)
+            print("warmup: model", s.llm_model, "loaded")
+            return
+        # The failure worth naming. A model the server can't load answers 404 or
+        # 500 with a sentence saying why — "unknown model architecture", "model
+        # not found" — and that sentence is the whole diagnosis. Printing the
+        # status code alone is how an afternoon disappears.
+        detail = (r.text or "").strip().replace("\n", " ")[:300]
+        LLM_STATUS.update(reachable=False,
+                          why=f"{base} answered {r.status_code}: {detail or 'no detail given'}")
+        print(f"warmup: model {s.llm_model} REFUSED — {LLM_STATUS['why']}")
+        if r.status_code in (404, 500):
+            print("  Is it pulled, and can this server load it?  "
+                  f"ollama run {s.llm_model}")
     except Exception as e:  # noqa: BLE001
+        LLM_STATUS.update(reachable=False, why=f"{type(e).__name__}: {e}")
         print("warmup: model not reachable yet —", type(e).__name__, e)
 
 

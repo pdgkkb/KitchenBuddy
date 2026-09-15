@@ -15,8 +15,9 @@ import { useUI } from "../state/ui.jsx";
 import { DishImage } from "../components/Chrome.jsx";
 import { Icon } from "../components/Icon.jsx";
 import PhotoStrip from "../components/PhotoStrip.jsx";
-import Waiting, { RECIPE_STAGES, LINK_STAGES } from "../components/Waiting.jsx";
-import { RecipeView, PhotoButton } from "./RecipeSheet.jsx";
+import Waiting, { METHOD_STAGES, LINK_STAGES } from "../components/Waiting.jsx";
+import { RecipeDetails, RecipeMethod, PhotoButton } from "./RecipeSheet.jsx";
+import "../styles/draft.css";
 
 export function CreateSheet({ options: initialOptions = null, autoGenerate = false, initialBrief = "" }) {
   const { k } = useKitchen();
@@ -25,6 +26,12 @@ export function CreateSheet({ options: initialOptions = null, autoGenerate = fal
   const [options, setOptions] = useState(initialOptions);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  /* Which of the two requests is running ("ideas" or "method"), and the phase
+     the server last reported. Null means it isn't narrating and Waiting should
+     fall back to its own pacing. */
+  const [phase, setPhase] = useState("ideas");
+  const [stage, setStage] = useState(null);
+  const [chosen, setChosen] = useState("");
   const on = ui.server.recipes;
   const soon = k.stock.filter(a => E.daysLeft(a) <= 3).map(a => E.ref(a.id).name.toLowerCase());
 
@@ -32,21 +39,30 @@ export function CreateSheet({ options: initialOptions = null, autoGenerate = fal
     if (autoGenerate && !initialOptions && !busy && !error) make();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* One dish, one call. This used to ask the model for two ideas, show them,
+     and then ask again for the full method of whichever you picked — two round
+     trips, each re-sending the whole prompt from scratch. On a local model that
+     is the single most expensive thing the app does, and choosing between two
+     one-line descriptions was never worth it: you can always ask for another. */
   const make = async () => {
     setBusy(true);
     setError(null);
+    setPhase("method");
+    setChosen("");
+    setStage(null);
     if (!on) {
       setBusy(false);
       setError("The assistant is switched off. Start the server to create a new recipe.");
       return;
     }
     try {
-      const { recipes } = await api.generateRecipe({
+      const { recipe } = await api.generateRecipeStream({
+        options: false,
         brief: brief || "Something good for tonight", stock: stockForServer(k.stock),
         serves: k.diners.length || 4, custom: k.customs
-      });
+      }, setStage);
       setBusy(false);
-      setOptions(recipes);
+      ui.openSheet("draft", { draft: recipe });
     } catch (e) {
       setBusy(false);
       setError(e.message);
@@ -56,12 +72,18 @@ export function CreateSheet({ options: initialOptions = null, autoGenerate = fal
   const choose = async (idea) => {
     setOptions(null);
     setBusy(true);
+    setPhase("method");
+    setStage(null);
+    setChosen(idea.name);
     try {
-      const { recipe } = await api.generateRecipe({
+      /* The dish is already decided, so this wait says so. The pictures are not
+         waited for at all: the recipe opens the moment it lands and PhotoStrip
+         asks for them afterwards, on the server's own background worker. */
+      const { recipe } = await api.generateRecipeStream({
         options: false,
         brief: `Write the full recipe for this chosen idea: ${idea.name}. ${idea.description}`,
         stock: stockForServer(k.stock), serves: k.diners.length || 4, custom: k.customs
-      });
+      }, setStage);
       setBusy(false);
       ui.openSheet("draft", { draft: recipe });
     } catch (e) {
@@ -72,8 +94,10 @@ export function CreateSheet({ options: initialOptions = null, autoGenerate = fal
 
   if (busy || error) return (
     <Waiting
-      stages={RECIPE_STAGES}
+      stages={METHOD_STAGES}
+      stage={stage}
       error={error}
+      title={phase === "method" && chosen ? `Writing ${chosen}` : "Working on it"}
       note={ui.server.model ? `${ui.server.model} on this Mac` : "The assistant"}
       onRetry={() => { setError(null); make(); }}
       onCancel={() => { setBusy(false); setError(null); }}
@@ -186,8 +210,25 @@ export function LinkSheet() {
   );
 }
 
+/* The recipe you were just handed.
+
+   Two changes, and the first is the one that matters. This panel used to hold
+   the only copy of a recipe that had just cost a local model a full minute of
+   the machine's attention — "Nothing is saved until a person has read it and
+   named it", said the file's own header, which sounds careful and in practice
+   is a shredder: a tap on the scrim outside the panel, the Escape key, or a
+   second thought about the name threw the whole thing away with no warning and
+   no way back. It is saved the moment it appears now. The name and the photo
+   edit the saved copy, and the footer offers to throw it away — a deliberate
+   act, rather than the default outcome of touching the wrong pixel.
+
+   The second is the shape. A recipe has two halves you read differently: what
+   you need, which you scan and check against the kitchen, and what you do,
+   which you follow one line at a time. In one narrow column they interrupt
+   each other. Side by side on a wide screen — the same arrangement the saved
+   recipe already uses — they don't. See frontend/src/styles/draft.css. */
 export function DraftSheet({ draft, method }) {
-  const { k, saveRecipe } = useKitchen();
+  const { k, saveRecipe, updateRecipe, deleteRecipe } = useKitchen();
   const ui = useUI();
   const [name, setName] = useState(draft.name);
   const [photo, setPhoto] = useState(draft.photo);
@@ -195,35 +236,75 @@ export function DraftSheet({ draft, method }) {
   const recipe = { ...draft, name, photo };
   const serves = k.diners.length || draft.serves;
 
+  // Into the book on arrival, exactly as written.
+  useEffect(() => { saveRecipe({ ...draft }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* Renaming edits the saved copy rather than a local one, so there is never a
+     draft and a saved version disagreeing. Debounced so a rename is one write
+     rather than one per keystroke; an empty box is never written, because a
+     recipe with no name is unfindable in the book. */
+  useEffect(() => {
+    if (!name.trim()) return;
+    const h = setTimeout(() => updateRecipe(draft.id, { name: name.trim(), photo }), 400);
+    return () => clearTimeout(h);
+  }, [name, photo]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const note = draft.origin === "assistant" ? "Written by the assistant. Read it before you trust it — it can be confidently wrong about timings."
     : method === "plain" ? "Read from the page as written. The assistant is off, so no heat or cues were added."
     : "Read from the page and adapted to your kitchen's ingredients.";
 
-  const keep = (thenCook) => {
-    if (!name.trim()) return ui.say("Give it a name first");
-    saveRecipe(recipe);
-    if (thenCook) ui.startCooking(recipe, serves);
-    else { ui.closeSheet(); ui.setTab("recipes"); ui.say("Saved to your recipes"); }
+  const throwAway = () => {
+    deleteRecipe(draft.id);
+    ui.closeSheet();
+    ui.say("Thrown away");
   };
 
   return (
-    <>
-      <DishImage recipe={recipe} className="dish-photo dish-draft">
-        <PhotoButton recipe={recipe} onDone={setPhoto} />
-      </DishImage>
-      {/* Not auto-started: the draft isn't saved yet, so pictures are made only
-          when the button above asks for them. */}
-      <PhotoStrip recipe={recipe} auto onPrimary={setPhoto} />
-      <div className="band"><b>{draft.origin === "link" ? `From ${draft.source?.site}` : "Before you save it"}</b><span>{note}</span></div>
-      <label className="field-label" htmlFor="rname">Call it</label>
-      <input id="rname" className="field" value={name} onChange={(e) => setName(e.target.value)} />
-      <RecipeView recipe={recipe} serves={serves} choices={choices} setChoices={setChoices} />
-      <div className="row-actions" style={{ marginTop: 24 }}>
-        <button className="btn btn-ghost" onClick={() => keep(false)}>Save it</button>
-        <button className="btn btn-primary" onClick={() => keep(true)}>Save and cook</button>
+    <div className="draft">
+      <div className="draft-hero">
+        <DishImage recipe={recipe} className="draft-photo">
+          <PhotoButton recipe={recipe} onDone={setPhoto} />
+        </DishImage>
+        <div className="draft-hero-text">
+          {/* The name is the first thing most people want to change, so it is
+              the heading itself rather than a labelled box further down. */}
+          <input className="draft-name" value={name} aria-label="Name of this recipe"
+                 placeholder="Name this dish" onChange={(e) => setName(e.target.value)} />
+          <p className="draft-meta">
+            {draft.minutes > 0 && <span className="draft-pill"><Icon name="clock" size={15} /> {draft.minutes} min</span>}
+            <span className="draft-pill"><Icon name="people" size={15} /> Serves {serves}</span>
+            {draft.cuisine && <span className="draft-pill">{draft.cuisine}</span>}
+            {draft.steps?.length > 0 && <span className="draft-pill"><Icon name="list" size={15} /> {draft.steps.length} steps</span>}
+          </p>
+        </div>
       </div>
-      {draft.origin !== "link" && <button className="link link-block" onClick={() => ui.openSheet("create")}>
-        <Icon name="spark" size={18} /> Try another</button>}
-    </>
+
+      <div className="draft-saved">
+        <Icon name="check" size={18} />
+        <span>Saved to your recipes<small>{draft.origin === "link"
+          ? ` — from ${draft.source?.site || "the page"}`
+          : " — rename it above, or throw it away at the bottom"}</small></span>
+      </div>
+      <p className="draft-warn">{note}</p>
+
+      <div className="draft-cols">
+        <div className="draft-left">
+          <PhotoStrip recipe={recipe} auto onPrimary={setPhoto} />
+          <RecipeDetails recipe={recipe} serves={serves} choices={choices} setChoices={setChoices} />
+        </div>
+        <div className="draft-right">
+          <RecipeMethod recipe={recipe} />
+        </div>
+      </div>
+
+      <div className="draft-foot">
+        <button className="btn btn-primary" onClick={() => ui.startCooking({ ...recipe, choices }, serves)}>Start cooking</button>
+        <button className="btn btn-ghost" onClick={() => { ui.closeSheet(); ui.setTab("recipes"); }}>Done — it's in the book</button>
+        <span className="draft-spacer" />
+        {draft.origin !== "link" && <button className="link" onClick={() => ui.openSheet("create")}>
+          <Icon name="spark" size={18} /> Try another</button>}
+        <button className="link danger" onClick={throwAway}><Icon name="trash" size={18} /> Throw it away</button>
+      </div>
+    </div>
   );
 }

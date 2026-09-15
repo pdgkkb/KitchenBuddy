@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../lib/api.js";
 import * as voice from "../lib/voice.js";
+import * as sq from "../lib/speechqueue.js";
 import { Icon } from "./Icon.jsx";
 import { useKitchen } from "../state/kitchen.jsx";
 import { useUI } from "../state/ui.jsx";
@@ -40,13 +41,20 @@ export function useChat(context, greeting, onAction) {
     setBusy(true);
     abort.current = new AbortController();
     let reply = "";
+    /* Speak the first sentence while the rest is still being written.
+       speechqueue.js was written to do exactly this and was never wired to
+       anything — its own header says "Chat.jsx feeds it unconditionally",
+       and Chat.jsx did not import it. So the chef sat in silence for the
+       whole reply and only then opened its mouth, which on a 15-token-a-second
+       model is most of a minute of standing over a pan wondering. */
+    const spoken = k.prefs.speakReplies ? sq.arm({ useServer: server.voice }) : null;
     try {
       await api.chat({
         messages: history.filter(m => m.id !== "hello").slice(-24).map(({ role, content }) => ({ role, content })),
         context: context(),
         custom: k.customs
       }, (ev) => {
-        if (ev.type === "delta") { reply += ev.text; patchLast(() => ({ content: reply, status: null })); }
+        if (ev.type === "delta") { reply += ev.text; sq.feed(ev.text); patchLast(() => ({ content: reply, status: null })); }
         else if (ev.type === "action") {
           const receipt = act.current ? act.current(ev.action) : null;
           if (receipt) patchLast(m => ({ actions: [...(m.actions || []), receipt] }));
@@ -61,16 +69,20 @@ export function useChat(context, greeting, onAction) {
       patchLast(() => ({ pending: false }));
       setBusy(false);
     }
-    // Speak the reply and WAIT for it to finish, so a hands-free loop knows
-    // when it's its turn to listen again. Uses the local Kokoro voice when the
-    // server has one, else the browser voice.
-    if (reply && k.prefs.speakReplies) {
+    /* Wait for the speaking to FINISH, so a hands-free loop knows when it is
+       its turn to listen again. The queue has been reading it out sentence by
+       sentence since the first full stop, so there is nothing left to say —
+       only to wait for. Saying it again here is what the echo was. */
+    if (spoken) {
+      sq.end();
+      try { await spoken; } catch { /* ignore */ }
+    } else if (reply && k.prefs.speakReplies) {
       try { await voice.speak(reply, server.voice); } catch { /* ignore */ }
     }
     return reply;
   }, [busy, context, k.customs, k.prefs.speakReplies, server.voice]);
 
-  const stop = () => { abort.current?.abort(); voice.stopSpeaking(); };
+  const stop = () => { abort.current?.abort(); sq.cancel(); voice.stopSpeaking(); };
   return { messages, send, busy, stop };
 }
 

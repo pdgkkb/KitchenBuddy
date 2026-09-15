@@ -1,0 +1,292 @@
+/* Happy Bite — the recipe you were just handed.
+
+   The moment after the model finishes is the one that decides whether the app
+   feels like a tool or a toy, and it was a phone-shaped column of text on a
+   1500px screen. A recipe has two halves that you read differently: what you
+   need (scanned, checked against the kitchen) and what you do (followed, one
+   line at a time). Side by side, they stop competing for the same eye.
+
+   Written against the app's own custom properties so it inherits the theme, and
+   confined to `.draft`, so nothing else in the app moves. */
+
+/* The draft is the only sheet that asks for `wide`, so widening it here widens
+   nothing else. :has() keeps the rule inside this file instead of needing a
+   class added in Chrome.jsx. */
+.sheet-panel.is-wide:has(.draft) {
+  width: min(1240px, 95vw);
+  max-width: min(1240px, 95vw);
+}
+
+.draft { display: block; }
+
+/* ------------------------------------------------------------------- hero */
+
+.draft-hero {
+  position: relative;
+  margin: -4px -4px 0;
+  border-radius: var(--r-lg, 18px);
+  overflow: hidden;
+}
+
+.draft-photo {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 21 / 8;
+  min-height: 190px;
+  background: var(--tint, var(--mint-wash, #e9f3ee));
+  display: grid;
+  place-items: center;
+  color: var(--mint-deep, #1f7a56);
+}
+
+.draft-photo img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.draft-photo .dish-fallback { width: 96px; height: 96px; opacity: 0.5; }
+
+/* A scrim, not a tint: the name has to stay legible over a photograph we did
+   not choose and cannot predict. */
+.draft-hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(to top,
+              rgba(12, 28, 22, 0.78) 0%,
+              rgba(12, 28, 22, 0.38) 38%,
+              rgba(12, 28, 22, 0) 68%);
+}
+
+.draft-hero-text {
+  position: absolute;
+  z-index: 2;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 20px 22px 16px;
+  display: grid;
+  gap: 10px;
+}
+
+/* The name is an input that doesn't look like one until you go near it —
+   the first thing most people want to change, and a bordered box over a
+   photograph would be ugly. */
+.draft-name {
+  width: 100%;
+  font: inherit;
+  font-size: clamp(26px, 3.4vw, 40px);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: #fff;
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  padding: 2px 6px;
+  margin-left: -6px;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.45);
+  transition: background 0.15s ease;
+}
+
+.draft-name:hover { background: rgba(255, 255, 255, 0.12); }
+.draft-name:focus {
+  outline: none;
+  background: rgba(255, 255, 255, 0.18);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.5);
+}
+
+.draft-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 0;
+}
+
+.draft-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 650;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.18);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+.draft-hero .photo-btn { position: absolute; z-index: 3; right: 14px; top: 14px; }
+
+/* --------------------------------------------------------------- the note */
+
+.draft-saved {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 16px 0 4px;
+  padding: 11px 14px;
+  border-radius: var(--r-lg, 16px);
+  background: var(--mint-wash, rgba(47, 158, 116, 0.1));
+  color: var(--mint-deep, #1f7a56);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.draft-saved small { font-weight: 500; opacity: 0.75; }
+
+.draft-warn {
+  margin: 10px 0 0;
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+}
+
+/* ----------------------------------------------------------- two columns */
+
+.draft-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  gap: 34px;
+  margin-top: 22px;
+  align-items: start;
+}
+
+/* A hairline, not a border: it separates without boxing anything in. */
+.draft-right {
+  padding-left: 34px;
+  margin-left: -34px;
+  border-left: 1px solid var(--line, rgba(0, 0, 0, 0.09));
+}
+
+.draft-left > :first-child,
+.draft-right > :first-child { margin-top: 0; }
+
+/* ------------------------------------------------------ the method, right */
+/* Numbered markers joined by a line, so a long method reads as a sequence
+   rather than a wall. */
+
+.draft-right .steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 22px;
+}
+
+.draft-right .step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 14px;
+}
+
+.draft-right .step::before {
+  content: "";
+  position: absolute;
+  left: 16px;
+  top: 34px;
+  bottom: -22px;
+  width: 2px;
+  background: var(--line, rgba(0, 0, 0, 0.09));
+}
+
+.draft-right .step:last-child::before { display: none; }
+
+.draft-right .step-no {
+  position: relative;
+  z-index: 1;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--mint, #2f9e74);
+  color: #fff;
+  font-weight: 800;
+  font-size: 15px;
+}
+
+.draft-right .step-label {
+  margin: 0 0 4px;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint, rgba(0, 0, 0, 0.42));
+}
+
+.draft-right .step-do {
+  margin: 0;
+  font-size: 1.06rem;
+  line-height: 1.45;
+  font-weight: 560;
+}
+
+.draft-right .step-heat { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 6px; }
+
+.draft-right .heat-tag,
+.draft-right .heat-cue {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.draft-right .heat-tag { background: var(--warm-sunk, rgba(220, 90, 60, 0.1)); color: var(--tomato, #c4553a); }
+.draft-right .heat-cue { background: var(--sunk, rgba(0, 0, 0, 0.05)); color: var(--ink-soft); font-style: italic; }
+
+.draft-right .step-why {
+  margin: 7px 0 0;
+  font-size: 0.87rem;
+  line-height: 1.45;
+  color: var(--ink-soft);
+  padding-left: 11px;
+  border-left: 2px solid var(--line, rgba(0, 0, 0, 0.09));
+}
+
+/* ------------------------------------------------------------- the footer */
+
+.draft-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 30px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line, rgba(0, 0, 0, 0.09));
+}
+
+.draft-foot .btn-primary { min-width: 190px; }
+.draft-foot .draft-spacer { flex: 1; }
+
+/* ------------------------------------------------------------- narrow */
+/* Below this the two columns are worse than one: the method wraps every few
+   words and the ingredient quantities start colliding with their names. */
+
+@media (max-width: 900px) {
+  .sheet-panel.is-wide:has(.draft) { width: min(680px, 94vw); max-width: min(680px, 94vw); }
+  .draft-cols { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .draft-right {
+    padding-left: 0;
+    margin-left: 0;
+    border-left: 0;
+    border-top: 1px solid var(--line, rgba(0, 0, 0, 0.09));
+    padding-top: 22px;
+    margin-top: 8px;
+  }
+  .draft-photo { aspect-ratio: 16 / 9; min-height: 150px; }
+  .draft-foot .btn-primary { min-width: 0; flex: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .draft-name { transition: none; }
+}

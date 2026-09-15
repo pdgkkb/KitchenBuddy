@@ -83,6 +83,18 @@ export function ServerSheet() {
         <button className={"chip" + (k.prefs.readSteps ? " is-on" : "")} aria-pressed={k.prefs.readSteps}
                 onClick={() => setPref("readSteps", !k.prefs.readSteps)}><Icon name="list" size={20} /> Each step while cooking</button>
       </div>
+      {/* The wake word has a switch at last. It had none before, which is why
+          it appeared not to work: the agent refused to arm it unless the local
+          voice models were running, and they have nothing to do with it. */}
+      <h3 className="sub-head">Hands-free</h3>
+      <p className="sub-note">With this on, the app listens for “{s.wakeWord || "hey chef"}” whenever you aren't already
+        talking to it, so you can start with flour on your hands. It keeps the microphone open to do that, and in Chrome
+        the browser sends what it hears to Google to recognise it — which is why it stays off until you ask. The mic
+        button works either way.</p>
+      <div className="chips">
+        <button className={"chip" + (k.prefs.handsFree ? " is-on" : "")} aria-pressed={!!k.prefs.handsFree}
+                onClick={() => setPref("handsFree", !k.prefs.handsFree)}><Icon name="mic" size={20} /> Listen for the wake word</button>
+      </div>
       <button className="btn btn-ghost" style={{ marginTop: 24 }} onClick={ui.refreshServer}>Check the server again</button>
     </>
   );

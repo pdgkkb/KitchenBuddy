@@ -19,7 +19,51 @@ import * as api from "./api.js";
 let current = null;
 let currentResolve = null;
 
+/* Which request is allowed to make a sound.
+   ------------------------------------------------------------------------
+   This is the echo, and the voice that keeps talking after "stop cooking".
+
+   `speak()` with the server voice does `api.say(text).then(blob => play it)`.
+   Between the request and the reply there is a second or two of network and
+   Kokoro, and NOTHING in the old code could reach into that gap. stopSpeaking()
+   paused `current` — but `current` was still null, because the audio element
+   does not exist yet. When the blob finally arrived it built a fresh Audio and
+   played it, cheerfully, over whatever was happening by then.
+
+   Two consequences, both reported: press stop and the chef finishes its
+   sentence a second later, and ask two things quickly (or let React mount the
+   screen twice, which it does in development) and both replies play at once —
+   an echo.
+
+   So every request takes a ticket. stopSpeaking() invalidates every ticket
+   issued so far, and a reply holding a stale one is dropped on arrival. */
+let generation = 0;
+
+/* What the sentence-by-sentence queue has already read out, so the same text
+   isn't spoken a second time when the stream finishes. */
+let spokenMark = "";
+
+const flat = (t) => String(t || "").replace(/[*_#`>]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+
+export function markSpoken(text) {
+  spokenMark = flat(text);
+}
+
+/* Consumed on use: a deliberate repeat still speaks. */
+export function isEcho(text) {
+  if (!spokenMark) return false;
+  const said = flat(text);
+  if (!said) return false;
+  const nearly = (a, b) => a.startsWith(b.slice(0, Math.max(12, Math.floor(b.length * 0.9))));
+  if (said === spokenMark || nearly(spokenMark, said) || nearly(said, spokenMark)) {
+    spokenMark = "";
+    return true;
+  }
+  return false;
+}
+
 export function stopSpeaking() {
+  generation += 1;                       // every ticket issued so far is void
   if (current) { try { current.pause(); } catch { /* ignore */ } current = null; }
   if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel();
   if (currentResolve) { const r = currentResolve; currentResolve = null; r(); }
@@ -27,28 +71,33 @@ export function stopSpeaking() {
 
 /* Returns a Promise that resolves when the audio finishes (or is stopped). */
 export function speak(text, useServer) {
-  stopSpeaking();
   const clean = String(text).replace(/[*_#`>]/g, "").trim();
+  if (clean && isEcho(clean)) return Promise.resolve();   // the stream already said it
+  stopSpeaking();
   if (!clean) return Promise.resolve();
+  const ticket = generation;
   return new Promise((resolve) => {
     currentResolve = resolve;
     const done = () => { if (currentResolve === resolve) { currentResolve = null; resolve(); } };
 
     if (useServer) {
       api.say(clean).then((blob) => {
+        // Back from the server. Is anyone still listening for this one?
+        if (ticket !== generation) return done();
         const audio = new Audio(URL.createObjectURL(blob));
         current = audio;
         audio.onended = done;
         audio.onerror = done;
-        audio.play().catch(() => browserSpeak(clean, done));
-      }).catch(() => browserSpeak(clean, done));
+        audio.play().catch(() => browserSpeak(clean, done, ticket));
+      }).catch(() => browserSpeak(clean, done, ticket));
       return;
     }
-    browserSpeak(clean, done);
+    browserSpeak(clean, done, ticket);
   });
 }
 
-function browserSpeak(clean, done) {
+function browserSpeak(clean, done, ticket) {
+  if (ticket !== undefined && ticket !== generation) return done();
   if (typeof speechSynthesis === "undefined") return done();
   const u = new SpeechSynthesisUtterance(clean);
   const lang = /[àâçéèêëîïôûùüÿœ]/i.test(clean) ? "fr" : "en";

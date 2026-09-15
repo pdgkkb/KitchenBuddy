@@ -14,6 +14,8 @@ import { DishImage } from "../components/Chrome.jsx";
 import { Icon } from "../components/Icon.jsx";
 import { DishTags, nameOf } from "../screens/Today.jsx";
 import PhotoStrip from "../components/PhotoStrip.jsx";
+import "../styles/method.css";
+import AdaptPanel from "../components/AdaptPanel.jsx";
 
 /* Everything about the dish EXCEPT the method: what you need, seasoning,
    options, ideas. This is the left column on a wide screen. */
@@ -32,6 +34,25 @@ export function RecipeDetails({ recipe: r, serves, choices, setChoices }) {
         <div className="band is-warm"><b>Last time you said</b><span>{learned.join(", ")}</span></div>
       )}
 
+      {/* Said out loud rather than quietly repaired. A method that mentions an
+          ingredient the recipe doesn't contain is the model losing the thread,
+          and the cook should find that out here, not with the pan already hot. */}
+      {r.adjusted?.length > 0 && (
+        <div className="band is-warm">
+          <b>Quantities brought down</b>
+          <span>The assistant asked for more than anyone could eat, so these were
+            trimmed: {r.adjusted.join("; ")}. Treat them as a starting point.</span>
+        </div>
+      )}
+
+      {r.contradictions?.length > 0 && (
+        <div className="band is-warm">
+          <b>Read the method twice</b>
+          <span>It mentions something this recipe doesn't contain — {r.contradictions.join(", ")}.
+            The assistant lost the thread; trust the ingredients above.</span>
+        </div>
+      )}
+
       <h3 className="sub-head">What you need for {serves}</h3>
       <ul className="ings">
         {r.needs.map(n => {
@@ -42,7 +63,13 @@ export function RecipeDetails({ recipe: r, serves, choices, setChoices }) {
           const short = have < want && !n.flexible;
           return (
             <li key={n.id} className={"ing" + (short ? " is-short" : "")}>
-              <span className="ing-qty">{E.formatQty(want, rr.unit)}</span>
+              {/* A quantity of zero means the recipe named the ingredient and
+                  never said how much. Printing "0 g" would be a lie with a
+                  decimal point in it. */}
+              <span className="ing-qty">{want > 0 ? E.formatQty(want, rr.unit) : "some"}</span>
+              {/* The shelf it comes from, drawn. At a glance a list of twelve
+                  lines becomes four groups, which is how a cook reads it. */}
+              <Icon name={rr.category} size={20} className="ing-ic" />
               <span className="ing-name">{rr.name}{n.prep && <small>{n.prep}</small>}</span>
               {short && <span className="ing-flag">need {E.formatQty(want - have, rr.unit)}</span>}
             </li>
@@ -65,7 +92,10 @@ export function RecipeDetails({ recipe: r, serves, choices, setChoices }) {
         <ul className="ings">
           {r.seasoning.filter(x => held.has(x.id) || x.essential).map(x => {
             const rr = E.ref(x.id);
-            return <li key={x.id} className="ing"><span className="ing-qty">{E.formatQty(E.scale(x.qty * mult, serves, r.serves, rr.unit), rr.unit)}</span>
+            const amount = x.toTaste || !x.qty
+              ? "to taste"
+              : E.formatQty(E.scale(x.qty * mult, serves, r.serves, rr.unit), rr.unit);
+            return <li key={x.id} className="ing"><span className="ing-qty">{amount}</span>
               <span className="ing-name">{rr.name}</span></li>;
           })}
         </ul>
@@ -82,6 +112,11 @@ export function RecipeDetails({ recipe: r, serves, choices, setChoices }) {
           </ul>
         </div>
       )}
+
+      {/* In RecipeDetails rather than the sheet, so the draft of a brand-new
+          recipe gets it too — that is exactly when you find out it wants an
+          oven you haven't got. */}
+      <AdaptPanel recipe={r} />
 
       {r.needs.filter(n => n.doneness && E.ref(n.id).doneness).map(n => {
         const opts = E.ref(n.id).doneness;
@@ -115,6 +150,12 @@ export function RecipeMethod({ recipe: r }) {
                 {st.heat && <span className="heat-tag"><Icon name="flame" size={16} />{st.heat}</span>}
                 {st.cue && <span className="heat-cue">until {st.cue.toLowerCase()}</span>}</p>}
               <p className="step-do">{st.do}</p>
+              {st.uses?.length > 0 && (
+                <p className="now-in">
+                  <span className="now-in-label">In now</span>
+                  {st.uses.map(id => <span key={id} className="now-in-item">{nameOf(id)}</span>)}
+                </p>
+              )}
               {st.why && <p className="step-why">{st.why}</p>}
             </div>
           </li>

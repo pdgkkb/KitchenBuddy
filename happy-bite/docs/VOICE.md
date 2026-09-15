@@ -31,7 +31,7 @@ instant (set `WHISPER_DEVICE=cuda`).
 # local LLM
 LLM_PROVIDER=openai
 OPENAI_BASE_URL=http://localhost:11434/v1
-LLM_MODEL=qwen2.5:7b-instruct
+LLM_MODEL=hf.co/unsloth/Qwen3.5-9B-GGUF:UD-Q4_K_XL   # see docs/MODEL.md
 OPENAI_API_KEY=ollama            # any non-empty value; Ollama ignores it
 
 # local voice
