@@ -148,8 +148,8 @@
    "shelfLife": 12
   },
   "goat": {
-   "name": "Goat's cheese",
-   "category": "dairy",
+   "name": "Goat ",
+   "category": "meat",
    "unit": "g",
    "shelfLife": 14,
    "perPiece": 180

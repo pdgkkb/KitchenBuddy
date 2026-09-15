@@ -1,9 +1,0 @@
-# Fully-local voice (SPEECH_PROVIDER=local). Install into the backend venv:
-#   pip install -r requirements-voice.txt
-# Kokoro's phonemiser also likes espeak-ng present:  brew install espeak-ng
-
-faster-whisper>=1.0      # local speech-to-text (CTranslate2 Whisper) — "hears you"
-kokoro>=0.9.4            # local text-to-speech, 82M, natural voice — "speaks to you"
-misaki[en]>=0.9.4        # Kokoro's English grapheme-to-phoneme
-soundfile>=0.12          # audio encoding
-# piper-tts>=1.2         # optional lighter fallback (only if TTS_ENGINE=piper)
