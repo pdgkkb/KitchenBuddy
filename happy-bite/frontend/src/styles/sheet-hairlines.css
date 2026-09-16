@@ -1,0 +1,118 @@
+/* Happy Bite — the hairlines that run over the blocks on a recipe sheet.
+
+   This replaces the guesswork version. With the real stylesheets in hand there
+   are three causes, and two of them are one file quietly fighting another.
+
+   Import it LAST in main.jsx, after redesign.css, so it wins on equal
+   specificity:
+
+       import "./styles/sheet-hairlines.css";
+
+   ---------------------------------------------------------------------------
+   1. THE DRAFT'S METHOD IS TWO DESIGNS AT ONCE.  This is the main one.
+
+   app.css styles `.step` as a CARD:
+
+       .step { display: flex; padding: 18px 16px; margin: 10px 0;
+               border: 1px solid var(--line); border-radius: var(--r-lg);
+               background: rgba(255,255,255,.62); box-shadow: var(--lift); }
+
+   draft.css then restyles `.draft-right .step` as a TIMELINE ROW — a grid with
+   a numbered marker and a connecting line between the markers:
+
+       .draft-right .step::before { left: 16px; top: 34px; bottom: -22px;
+                                    width: 2px; background: var(--line); }
+
+   It changes `display`, `grid-template-columns` and `gap`, and never clears the
+   card. So every step in the draft is still a bordered, rounded, shadowed box —
+   and the connector is a 2px line that starts INSIDE that box, crosses its
+   bottom border, and runs 22px on into the gap before the next one. That is
+   exactly "slight lines which go over blocks", and it is on every step of every
+   generated recipe.
+
+   The timeline is the newer, deliberate design, so the card is what goes.
+
+   2. THE COLUMN DIVIDER SITS ON THE LEFT COLUMN'S EDGE.
+
+       .draft-cols  { gap: 34px }
+       .draft-right { margin-left: -34px; padding-left: 34px;
+                      border-left: 1px solid var(--line); }
+
+   -34px is the whole gap, so the divider lands flush against the right-hand
+   edge of the left column's content — touching the ingredient rows and the
+   cards rather than sitting between the two columns. Half the gap puts it where
+   it was meant to go.
+
+   3. EVERY LIST ROW HAS A BOTTOM BORDER, INCLUDING THE LAST.
+
+       .ing         { border-bottom: 1px solid var(--line) }
+       .status-line { border-bottom: 1px solid var(--line) }
+
+   A separator after the final row isn't a separator — it's a line along the
+   bottom of the block, which is what it looks like. (`.row` already gets this
+   right: redesign.css clears it inside `.rows`.)
+   --------------------------------------------------------------------------- */
+
+/* ---- 1. the draft's method is a timeline, not a stack of cards ---- */
+
+.draft-right .step {
+  padding: 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+/* With the card gone the connector runs marker-to-marker, which is what it was
+   drawn for. `.draft-right .steps` already provides the 22px gap it reaches
+   across, so this only has to stop short of the next marker rather than
+   guessing at a card's padding. */
+.draft-right .step::before {
+  top: 38px;
+  bottom: -18px;
+}
+
+/* ---- 2. the divider belongs in the middle of the gap ---- */
+
+.draft-cols > .draft-right {
+  margin-left: -17px;               /* half of .draft-cols' 34px gap */
+  padding-left: 17px;
+}
+
+/* Below 900px draft.css turns the divider into a top border and zeroes the
+   margin; don't put it back. */
+@media (max-width: 900px) {
+  .draft-cols > .draft-right { margin-left: 0; padding-left: 0; }
+}
+
+/* The recipe sheet's own two columns have only an 8px gap, so the divider is
+   almost touching the method. A little breathing room, and no double scrollbar
+   against the panel behind it. */
+@media (min-width: 860px) {
+  .recipe-cols .recipe-right { padding-left: 14px; }
+  .recipe-cols .recipe-left { padding-right: 6px; }
+}
+
+/* ---- 3. no separator after the last row ---- */
+
+.ings .ing:last-child,
+.ings li:last-child,
+.status-line:last-child {
+  border-bottom: 0;
+}
+
+/* A block that ends in a list shouldn't have the list's last line doubling as
+   its own bottom edge either — belt and braces for the compact list cooking
+   mode shows above the step. */
+.ings.compact .ing:last-child { border-bottom: 0; }
+
+/* ---- while we're here: the one that bites on a 2x screen ---- */
+
+/* A 1px border between two rows whose heights land on a half-pixel is drawn
+   twice, half a pixel apart, and reads as a faint double line. Asking for the
+   hairline in device pixels makes it one line at any zoom. */
+@media (min-resolution: 2dppx) {
+  .ings .ing,
+  .status-line { border-bottom-width: 0.5px; }
+}

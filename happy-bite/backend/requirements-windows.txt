@@ -1,0 +1,101 @@
+# Happy Bite — backend dependencies for Windows 10/11 (x64).
+# On a Mac use requirements-mac.txt instead.
+#
+#     py -3.12 -m venv .venv            # 3.11 or 3.12 — NOT 3.13/3.14, see below
+#     .venv\Scripts\Activate.ps1
+#     pip install -r requirements-windows.txt
+#
+# Everything below "the app itself" is optional. Leave a section out and that
+# one feature switches off; the server still starts and /api/health/models says
+# which package is absent.
+#
+# Differences from the Mac file: no MLX (Apple-only), so hearing is
+# faster-whisper and speaking is Kokoro on torch. The last-resort voice is the
+# built-in Windows voice, which needs nothing from this file.
+
+
+# ---------------------------------------------------------------- the app itself
+# Without these the server does not start at all.
+
+fastapi>=0.110              # the web framework
+uvicorn[standard]>=0.29     # the server. [standard] brings watchfiles, so --reload works
+pydantic>=2.6               # request/response models, and the recipe schema
+pydantic-settings>=2.2      # app/config.py — reads backend/.env
+python-dotenv>=1.0          # what pydantic-settings uses to read that .env
+httpx>=0.27                 # outbound HTTP: the model server, link import, image downloads
+python-multipart>=0.0.9     # REQUIRED for UploadFile — /speech/hear and /receipt/read
+beautifulsoup4>=4.12        # app/importer.py — reading a recipe off a web page
+numpy>=1.26                 # packs Kokoro's audio into WAV
+
+
+# ---------------------------------------------------------------- chat providers
+# `openai` also covers a local model served by LM Studio or Ollama
+# (LLM_PROVIDER=openai + OPENAI_BASE_URL).
+
+anthropic>=0.34             # LLM_PROVIDER=anthropic
+openai>=1.40                # LLM_PROVIDER=openai, OpenAI images, OpenAI voice
+
+
+# ---------------------------------------------------------------- GPU (NVIDIA) — read first
+# pip installs the CPU-only build of torch on Windows. Everything works on the
+# CPU, just slower. For an NVIDIA card, install the CUDA build BEFORE this file,
+# with the command pytorch.org/get-started/locally gives for your CUDA version:
+#
+#     pip install torch --index-url https://download.pytorch.org/whl/cu<version>
+#
+# pip then keeps that torch instead of replacing it. That speeds up Kokoro and
+# pictures.
+#
+# faster-whisper is separate: on CUDA it needs the cuBLAS 12 and cuDNN 9 DLLs on
+# PATH (CUDA Toolkit 12 + cuDNN 9 from NVIDIA). Without them, keep
+# WHISPER_DEVICE=cpu and WHISPER_COMPUTE=int8 — fast enough for short commands.
+
+
+# ---------------------------------------------------------------- local voice
+# SPEECH_PROVIDER=local. Both models download their weights on first use.
+
+faster-whisper>=1.0         # hearing you (CPU with WHISPER_COMPUTE=int8, or CUDA)
+kokoro>=0.7                 # speaking to you — 82M
+soundfile>=0.12             # how Kokoro's audio gets out as WAV
+misaki[en]>=0.7             # Kokoro's phonemiser (misaki[fr] if you switch to French)
+
+# Piper is a lighter alternative to Kokoro, only for TTS_ENGINE=piper. Left out
+# by default: check that it installs on your Python before relying on it.
+# piper-tts>=1.2
+
+# ffmpeg is only a fallback decoder for recordings, but worth having:
+#     winget install Gyan.FFmpeg
+
+
+# ---------------------------------------------------------------- local pictures
+# IMAGE_PROVIDER=local. Stable Diffusion Turbo through diffusers. ~2.5 GB
+# downloads on first use. torch is also what Kokoro runs on, so keep this block
+# even with IMAGE_PROVIDER=none.
+
+torch>=2.2
+diffusers==0.35.2           # compatible with the Transformers 4.x API
+transformers==4.57.6
+huggingface-hub==0.36.2
+accelerate>=0.30
+safetensors>=0.4
+pillow>=10.0                # also used to straighten receipt photos before OCR
+
+
+# ---------------------------------------------------------------- reading receipts
+# pytesseract is only the binding. The program comes from the UB Mannheim build:
+#     winget install UB-Mannheim.TesseractOCR
+# The app finds it in C:\Program Files\Tesseract-OCR even if it isn't on PATH.
+# Tick the French language data in the installer if you read French receipts.
+
+pytesseract>=0.3.10
+
+
+# ---------------------------------------------------------------- tests
+
+pytest>=8.0
+pytest-asyncio>=0.23
+
+
+# ---------------------------------------------------------------- one warning
+# torch, diffusers and kokoro publish NO wheels for Python 3.13 or 3.14. Build
+# the venv on 3.12:  winget install Python.Python.3.12

@@ -17,9 +17,11 @@ Start-up now does three extra things, all of them optional:
     paying for Whisper, Qwen and Kokoro to load.
 """
 
+import mimetypes
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -79,13 +81,51 @@ media.mkdir(parents=True, exist_ok=True)
 (media / "recipes").mkdir(parents=True, exist_ok=True)
 app.mount("/media", StaticFiles(directory=media), name="media")
 
-dist = ROOT / "frontend" / "dist"
+# ---- the built app: long-lived caching, pre-compressed bytes ----------------
+#
+# `npm run build` fingerprints everything under assets/ (the name changes when
+# the content does), so those are cached for a year and never revalidated.
+# index.html and sw.js must always be checked, or a new build is never seen.
+# vite.perf.js writes .br and .gz beside each text file; they are sent as-is,
+# so no request pays for compression. The API is deliberately left alone:
+# compressing the chat's event stream would hold words back until a buffer fills.
+
+IMMUTABLE = "public, max-age=31536000, immutable"
+REVALIDATE = "no-cache"
+DAY = "public, max-age=86400"
+mimetypes.add_type("application/manifest+json", ".webmanifest")
+mimetypes.add_type("font/woff2", ".woff2")
+
+
+def _send(request: Request, file: Path, cache: str) -> FileResponse:
+    accepted = request.headers.get("accept-encoding", "")
+    headers = {"Cache-Control": cache, "Vary": "Accept-Encoding"}
+    media_type = mimetypes.guess_type(file.name)[0]
+    for encoding, suffix in (("br", ".br"), ("gzip", ".gz")):
+        packed = file.with_name(file.name + suffix)
+        if encoding in accepted and packed.is_file():
+            headers["Content-Encoding"] = encoding
+            return FileResponse(packed, media_type=media_type, headers=headers)
+    return FileResponse(file, media_type=media_type, headers=headers)
+
+
+def _inside(root: Path, path: str) -> Path | None:
+    file = (root / path).resolve()
+    return file if path and file.is_file() and root in file.parents else None
+
+
+dist = (ROOT / "frontend" / "dist").resolve()
 if dist.exists():
-    app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
+    @app.get("/assets/{path:path}", include_in_schema=False)
+    async def assets(path: str, request: Request):
+        file = _inside(dist / "assets", path)
+        if not file:
+            raise HTTPException(404)
+        return _send(request, file, IMMUTABLE)
 
     @app.get("/{path:path}", include_in_schema=False)
-    async def spa(path: str):
-        file = (dist / path).resolve()
-        if path and file.is_file() and dist in file.parents:
-            return FileResponse(file)
-        return FileResponse(dist / "index.html")
+    async def spa(path: str, request: Request):
+        file = _inside(dist, path)
+        if file and file.name not in ("index.html", "sw.js"):
+            return _send(request, file, DAY)
+        return _send(request, file or dist / "index.html", REVALIDATE)

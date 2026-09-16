@@ -5,6 +5,7 @@ import { useKitchen } from "../state/kitchen.jsx";
 import { useUI } from "../state/ui.jsx";
 import { Icon } from "../components/Icon.jsx";
 import { nameOf } from "../screens/Today.jsx";
+import * as wake from "../lib/wake.js";
 
 const TWEAKS = ["Needs more salt", "Too salty", "Needs more spice", "Too spicy", "Too rich", "Too dry",
   "Needs more sauce", "Bland", "Cook it longer", "Cook it less", "Bigger portions", "Smaller portions",
@@ -58,6 +59,13 @@ export function ServerSheet() {
   const { k, setPref } = useKitchen();
   const ui = useUI();
   const s = ui.server;
+  const phrase = s.wakeWord || "hey chef";
+
+  /* What the wake word can do HERE, worked out before it is switched on.
+     "It doesn't work" was, four times running, one of these three sentences
+     that nothing on screen ever said. */
+  const canWake = wake.wakeSupported();
+
   const Line = ({ on, label, detail }) => (
     <li className="status-line">
       <span className={"status-dot" + (on ? " is-on" : "")} aria-hidden="true" />
@@ -83,18 +91,32 @@ export function ServerSheet() {
         <button className={"chip" + (k.prefs.readSteps ? " is-on" : "")} aria-pressed={k.prefs.readSteps}
                 onClick={() => setPref("readSteps", !k.prefs.readSteps)}><Icon name="list" size={20} /> Each step while cooking</button>
       </div>
-      {/* The wake word has a switch at last. It had none before, which is why
-          it appeared not to work: the agent refused to arm it unless the local
-          voice models were running, and they have nothing to do with it. */}
+
       <h3 className="sub-head">Hands-free</h3>
-      <p className="sub-note">With this on, the app listens for “{s.wakeWord || "hey chef"}” whenever you aren't already
-        talking to it, so you can start with flour on your hands. It keeps the microphone open to do that, and in Chrome
-        the browser sends what it hears to Google to recognise it — which is why it stays off until you ask. The mic
-        button works either way.</p>
+      <p className="sub-note">With this on, the app listens for “{phrase}” whenever you aren't already talking to it, so you
+        can start with flour on your hands. It keeps the microphone open to do that, and in Chrome the browser sends what it
+        hears to Google to recognise it — which is why it stays off until you ask. The mic button works either way, and
+        holding that button down turns this on and off without coming here.</p>
       <div className="chips">
         <button className={"chip" + (k.prefs.handsFree ? " is-on" : "")} aria-pressed={!!k.prefs.handsFree}
-                onClick={() => setPref("handsFree", !k.prefs.handsFree)}><Icon name="mic" size={20} /> Listen for the wake word</button>
+                disabled={canWake !== "ok"}
+                onClick={() => setPref("handsFree", !k.prefs.handsFree)}>
+          <Icon name="mic" size={20} /> Listen for the wake word
+        </button>
       </div>
+      {canWake !== "ok" && (
+        <div className="band is-warm" style={{ marginTop: 12 }}>
+          <b>The wake word can't run in this browser</b>
+          <span>{wake.WAKE_REASON[canWake]}</span>
+        </div>
+      )}
+      {canWake === "ok" && k.prefs.handsFree && (
+        <p className="sub-note" style={{ marginTop: 10 }}>
+          It's on. Close this and say “{phrase}” — the mic button shows a ring while it's listening for you, and says
+          underneath if something stops it.
+        </p>
+      )}
+
       <button className="btn btn-ghost" style={{ marginTop: 24 }} onClick={ui.refreshServer}>Check the server again</button>
     </>
   );

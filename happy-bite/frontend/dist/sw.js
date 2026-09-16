@@ -5,7 +5,7 @@
    not), everything else cache-first as it's fetched. The API is never
    cached — a stale answer from the chef is worse than none. */
 
-const CACHE = "happybite-v5";
+const CACHE = "happybite-v6";
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(["/", "/manifest.webmanifest", "/icon.svg"])).then(() => self.skipWaiting()));

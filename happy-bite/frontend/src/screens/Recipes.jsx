@@ -2,7 +2,7 @@
    Sunday is the opposite of deciding at 7pm, so what you can't make is
    dimmed rather than hidden: here, seeing what you'd need is the point. */
 
-import { useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import * as E from "../core/engine.js";
 import { MEAL_TYPES } from "../data/index.js";
 import { useKitchen } from "../state/kitchen.jsx";
@@ -19,8 +19,9 @@ export default function Recipes() {
   const [type, setType] = useState(null);
   const [mine, setMine] = useState(false);
 
+  const deferredQ = useDeferredValue(q);
   const rated = useMemo(() => {
-    const query = q.trim().toLowerCase();
+    const query = deferredQ.trim().toLowerCase();
     return k.book
       .map(r => ({ r, a: E.assess(r, k.stock, new Set(), k.taste, k.diners.length || r.serves) }))
       .filter(x => x.a)
@@ -28,7 +29,7 @@ export default function Recipes() {
       .filter(x => !type || x.r.types.includes(type))
       .filter(x => !mine || x.r.origin)
       .sort((a, b) => (b.a.cookable - a.a.cookable) || a.r.name.localeCompare(b.r.name));
-  }, [k, q, type, mine]);
+  }, [k, deferredQ, type, mine]);
 
   const ready = rated.filter(x => x.a.cookable).length;
 

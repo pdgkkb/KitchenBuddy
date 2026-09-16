@@ -51,15 +51,64 @@ export function expiryHistogram(stock, span = 14) {
 
 /* ---------- Units ----------
    `perPiece` bridges "three courgettes" and "600 g". Quantity is held in
-   the reference unit; only the display converts, so toggling never drifts. */
+   the reference unit; only the display converts, so toggling never drifts.
+
+   WHAT WAS WRONG, AND WHY THE KITCHEN KEPT GOING RED
+   --------------------------------------------------
+   The old `convert` handled exactly one pair of units — g <-> u, and only for
+   an ingredient with a `perPiece` — and for every other mismatch it returned
+   the number UNCHANGED. Not "I can't tell": unchanged, as a plain number, which
+   every caller then compared against a quantity in a different unit.
+
+   So a litre of milk in the fridge, held as 1 (unit "l"), was compared against
+   a recipe wanting 200 (unit "ml") and came back short. Two onions, held as 2
+   (unit "u") against a need for 150 g, came back short. Both showed RED — "you
+   haven't got this" — for something sitting on the shelf. This is the whole of
+   the "we have it and it shows in red" report, and it never involved the
+   server at all.
+
+   Now: real conversions inside mass and inside volume, `perPiece` to cross
+   between pieces and mass, and NaN — honestly, loudly — when two units cannot
+   be compared. NaN is deliberate: `NaN >= want` is false and `NaN < want` is
+   ALSO false, so a caller that forgets to check can't accidentally call it
+   short. `known()` below is the explicit check. */
+
+const MASS = { mg: 0.001, g: 1, kg: 1000 };
+const VOL = { ml: 1, cl: 10, dl: 100, l: 1000 };
 
 export const countable = (r) => Boolean(r && r.perPiece);
+export const known = (n) => typeof n === "number" && Number.isFinite(n);
 
 export function convert(qty, from, to, r) {
-  if (from === to || !countable(r)) return qty;
-  if (from === "g" && to === "u") return Math.max(1, Math.round(qty / r.perPiece));
-  if (from === "u" && to === "g") return Math.round(qty * r.perPiece);
-  return qty;
+  const n = Number(qty);
+  if (!Number.isFinite(n)) return NaN;
+  if (!from || !to || from === to) return n;
+  if (MASS[from] && MASS[to]) return n * MASS[from] / MASS[to];
+  if (VOL[from] && VOL[to]) return n * VOL[from] / VOL[to];
+  // Water's density, used on purpose and only between ml and g. A kitchen
+  // holding stock in ml against a recipe written in g is the common case and
+  // the error is smaller than the error in "you don't have any".
+  if (VOL[from] && MASS[to]) return n * VOL[from] / MASS[to];
+  if (MASS[from] && VOL[to]) return n * MASS[from] / VOL[to];
+  if (r && r.perPiece) {
+    if (from === "u" && MASS[to]) return n * r.perPiece / MASS[to];
+    if (MASS[from] && to === "u") return Math.max(1, Math.round(n * MASS[from] / r.perPiece));
+    if (from === "u" && VOL[to]) return n * r.perPiece / VOL[to];
+    if (VOL[from] && to === "u") return Math.max(1, Math.round(n * VOL[from] / r.perPiece));
+  }
+  return NaN;                      // two units with nothing between them
+}
+
+/* How much of `need` this kitchen holds, in the unit the recipe asks for.
+   `sure` is false when the units don't meet — the item IS there, we simply
+   can't put a number on it, and "there, amount unknown" must never be drawn
+   the same as "not there". */
+export function held(item, r, unit) {
+  if (!item) return { qty: 0, sure: true, present: false };
+  const got = convert(item.qty, item.unit || r.unit || unit, unit || r.unit, r);
+  return known(got)
+    ? { qty: got, sure: true, present: true }
+    : { qty: 0, sure: false, present: true };
 }
 
 export function step(unit, qty) {
@@ -72,6 +121,7 @@ export function step(unit, qty) {
 
 export function formatQty(qty, unit) {
   const n = (x) => String(Math.round(x * 100) / 100).replace(".", ",");
+  if (!known(qty)) return "some";
   if (unit === "u") return n(qty);
   if (unit === "g" && qty >= 1000) return n(qty / 1000) + " kg";
   if (unit === "ml" && qty >= 1000) return n(qty / 1000) + " l";
@@ -79,9 +129,15 @@ export function formatQty(qty, unit) {
   return n(qty) + " " + unit;
 }
 
-/* Scaled to the table, rounded to something a person recognises. */
+/* Scaled to the table, rounded to something a person recognises.
+   `base` guards a recipe saved before `serves` was always written: dividing by
+   0 or undefined made every quantity NaN, and NaN quantities are another way
+   an ingredient you own reads as missing. */
 export function scale(qty, serves, base, unit) {
-  const raw = qty * (serves / base);
+  const from = Number(base) > 0 ? Number(base) : 4;
+  const to = Number(serves) > 0 ? Number(serves) : from;
+  const raw = Number(qty) * (to / from);
+  if (!Number.isFinite(raw)) return 0;
   if (unit === "u") return Math.max(1, Math.round(raw));
   if (raw >= 100) return Math.round(raw / 10) * 10;
   if (raw >= 10) return Math.round(raw);
@@ -141,30 +197,57 @@ export function assess(recipe, stock, excluded, taste, serves) {
   for (const n of recipe.needs) if (excluded.has(n.id)) return null;
   for (const s of recipe.seasoning || []) if (excluded.has(s.id)) return null;
 
-  const held = new Map(stock.map(a => [a.id, a]));
-  let required = 0, met = 0, have = 0;
-  const missing = [], urgent = [], missingSeasoning = [];
+  const stockMap = new Map(stock.map(a => [a.id, a]));
+  let required = 0, met = 0, inStock = 0;
+  const missing = [], urgent = [], missingSeasoning = [], unsure = [];
 
   for (const n of recipe.needs) {
     const r = ref(n.id);
-    const item = held.get(n.id);
+    const item = stockMap.get(n.id);
     const want = scale(n.qty, serves, recipe.serves, r.unit);
-    const got = item ? convert(item.qty, item.unit || r.unit, r.unit, r) : 0;
+    const have = held(item, r, r.unit);
     const weight = n.flexible ? 0.2 : 1;
     required += weight;
-    if (got >= want) {
-      met += weight; have += 1;
+
+    /* Three outcomes, not two. The middle one is new and is the fix:
+       the item is on the shelf but its unit and the recipe's unit have
+       nothing between them, so we know they HAVE it and not how much. That
+       is not a reason to send them shopping. */
+    if (have.present && !have.sure) {
+      met += weight; inStock += 1;
+      unsure.push(n.id);
+      if (item && isUrgent(item)) urgent.push(n.id);
+    } else if (have.qty >= want || want <= 0) {
+      met += weight; inStock += 1;
       if (item && isUrgent(item)) urgent.push(n.id);
     } else if (!n.flexible) {
-      missing.push({ id: n.id, qty: want - got });
+      missing.push({ id: n.id, qty: want - have.qty });
     }
   }
 
   for (const s of recipe.seasoning || []) {
-    if (held.has(s.id)) continue;
+    if (stockMap.has(s.id)) { inStock += 1; continue; }
     if (s.essential) missing.push({ id: s.id, qty: s.qty });
     else missingSeasoning.push(s.id);
   }
+
+  /* ---------- The little ring, and why it said 1/1 ----------
+     `total` used to be `recipe.needs.length`, which is not the number of
+     ingredients in the recipe — it is the number of ingredients that happened
+     to match a catalogue id. An assistant-written dish puts the rest in
+     `seasoning` and in `extras` (the ones with no id at all, written out as a
+     shopper would), and the recipe sheet prints all three. So a five-line
+     recipe with one matched id drew "1/1" beside a list of five things, which
+     reads as a bug because it is one.
+
+     Now the ring counts every line the sheet shows, and "have" is everything
+     that is NOT standing between you and cooking it — so a dish marked "Ready
+     to cook" always draws a full ring, and one short of two things draws
+     4 of 6. The two numbers can no longer disagree with the label beside them. */
+  const listed = recipe.needs.length
+               + (recipe.seasoning || []).length
+               + (recipe.extras || []).length;
+  const total = Math.max(listed, 1);
 
   const parts = {
     coverage: required ? met / required : 0,
@@ -176,7 +259,11 @@ export function assess(recipe, stock, excluded, taste, serves) {
 
   return {
     recipe, score, parts, coverage: parts.coverage, missing, urgent, missingSeasoning,
-    have, total: recipe.needs.length, cookable: missing.length === 0
+    unsure,                                   // present, amount not comparable
+    inStock,                                  // actually counted on the shelf
+    have: Math.max(0, total - missing.length),
+    total,
+    cookable: missing.length === 0
   };
 }
 
@@ -222,7 +309,7 @@ export function surprise(ctx, avoid) {
 /* ---------- Shopping ---------- */
 
 export function shoppingList(plannedIds, stock, serves, extras = [], book = RECIPES) {
-  const held = new Map(stock.map(a => [a.id, a]));
+  const stockMap = new Map(stock.map(a => [a.id, a]));
   const want = new Map();
   for (const id of plannedIds) {
     const r = book.find(x => x.id === id);
@@ -243,9 +330,12 @@ export function shoppingList(plannedIds, stock, serves, extras = [], book = RECI
   for (const [id, qty] of want) {
     const r = ref(id);
     if (!r.name) continue;
-    const item = held.get(id);
-    const have = item ? convert(item.qty, item.unit || r.unit, r.unit, r) : 0;
-    const short = qty - have;
+    const have = held(stockMap.get(id), r, r.unit);
+    // Same rule as the kitchen: if it is on the shelf and we can't compare the
+    // amount, don't put it on the list. Buying a second jar of something you
+    // already have is the cheaper mistake, but it is still the wrong answer.
+    if (have.present && !have.sure) continue;
+    const short = qty - have.qty;
     if (short > 0) out.push({ id, qty: short, unit: r.unit, category: r.category });
   }
   return out.sort((a, b) =>
@@ -273,9 +363,9 @@ export function matchRate(lines) {
 /* ---------- Seasoning ideas: only from the dish on screen ---------- */
 
 export function seasoningIdeas(recipe, stock) {
-  const held = new Set(stock.map(a => a.id));
+  const inKitchen = new Set(stock.map(a => a.id));
   return (recipe.seasoning || [])
-    .filter(s => !s.essential && !held.has(s.id) && ref(s.id).name)
+    .filter(s => !s.essential && !inKitchen.has(s.id) && ref(s.id).name)
     .map(s => ({ id: s.id, name: ref(s.id).name, origin: ref(s.id).origin }));
 }
 

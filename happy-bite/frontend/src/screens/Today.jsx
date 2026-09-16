@@ -123,7 +123,7 @@ export default function Today() {
       ) : pick ? (
         <>
           <article className="dish-card">
-            <DishImage recipe={pick.recipe} className="dish-photo dish-hero">
+            <DishImage recipe={pick.recipe} className="dish-photo dish-hero" priority>
               <div className="dish-overlay">
                 <h2 className="dish-name">{pick.recipe.name}</h2>
                 <DishTags recipe={pick.recipe} />

@@ -8,7 +8,7 @@
    tapping — it calls the very same methods. */
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { INGREDIENTS, RECIPES, STARTING_STOCK } from "../data/index.js";
+import { INGREDIENTS, RECIPES, STARTING_STOCK, catalogReady } from "../data/index.js";
 import * as E from "../core/engine.js";
 import * as Store from "../lib/store.js";
 
@@ -34,11 +34,16 @@ const PERSISTED = {
 };
 
 async function load() {
-  const s = {};
-  for (const [key, fb] of Object.entries(PERSISTED)) s[key] = await Store.read(key, fb);
+  // Every key in parallel, alongside the corpus catalogue: one wait, not eighteen.
+  const keys = Object.keys(PERSISTED);
+  const [values, recipeReset] = await Promise.all([
+    Promise.all(keys.map(key => Store.read(key, PERSISTED[key]))),
+    Store.read("recipeBookReset", false),
+    catalogReady
+  ]);
+  const s = Object.fromEntries(keys.map((key, i) => [key, values[i]]));
   // One-time migration: remove the old built-in/template-created local book,
   // then preserve recipes created by the assistant from this point onward.
-  const recipeReset = await Store.read("recipeBookReset", false);
   if (!recipeReset) {
     s.myRecipes = [];
     await Store.write("myRecipes", s.myRecipes);

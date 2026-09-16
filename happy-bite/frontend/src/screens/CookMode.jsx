@@ -10,7 +10,35 @@
    "stop timer" — cancel a running timer.
    "stop cooking" — end the session.
    The ✕ minimises to a dock you tap or reach with "go back to the cooking
-   recipe". */
+   recipe".
+
+   WHAT CHANGED, AND WHY THIS SCREEN USED TO LAG
+   --------------------------------------------
+   Three things, none of them visible on this screen, all of them paid for here.
+
+   1. The microphone was built and destroyed on EVERY turn of the listening
+      loop — getUserMedia, a fresh AudioContext, a fresh analyser. That is a
+      few hundred milliseconds of device negotiation before anything was
+      recording (which is where the first word of what you said went), and a
+      browser only allows a handful of AudioContexts at once, so a long
+      session eventually just stopped hearing with no error at all. lib/voice.js
+      now holds one microphone for the session; this screen hands it back in
+      `stopLive` and nowhere else.
+
+   2. Every question rebuilt a system prompt containing the whole ingredient
+      catalogue, sixty lines of stock, nine thousand characters of recipe JSON
+      and a fresh corpus lookup — thousands of tokens the model reads before
+      writing the first character of "turn it down a bit". The server now
+      sends a cooking-sized prompt (see prompts.chef_system) and skips the
+      corpus entirely while you are at the hob.
+
+   3. The server has always been able to write the answers to a step's likely
+      questions IN ADVANCE, while you chop — `backend/app/prefetch.py`, exposed
+      at /api/cook/prefetch and /api/cook/quick — and no browser code ever
+      called either endpoint. It does now: `prime` below parks the answers for
+      the step you are on and the one after, and `hearNext` asks for a parked
+      answer before it troubles the model. A hit costs nothing and arrives
+      instantly, which the caption marks so it doesn't read as a guess. */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as E from "../core/engine.js";
@@ -37,6 +65,7 @@ export default function CookMode() {
   const [live, setLive] = useState(false);               // hands-free listening on
   const [vstate, setVstate] = useState("");              // listening | thinking | speaking
   const [answer, setAnswer] = useState("");              // the chef's latest short reply
+  const [instant, setInstant] = useState(false);         // that answer was already written
   const [typed, setTyped] = useState("");
   const step = recipe.steps[i];
   const total = recipe.steps.length;
@@ -56,13 +85,27 @@ export default function CookMode() {
      the milk", mid-recipe, went nowhere. */
   const chat = useChat(context, null, applyAction);
   const sendRef = useRef(chat.send); sendRef.current = chat.send;
+  const busy = chat.busy;
 
   useEffect(() => () => voice.stopSpeaking(), []);
 
+  /* The page behind this screen is covered completely, but its drifting,
+     blurred background kept animating on the same GPU the model and the voice
+     run on. Take it out while cooking; it comes back with the dock. */
+  useEffect(() => {
+    document.body.classList.add("is-cooking");
+    return () => document.body.classList.remove("is-cooking");
+  }, []);
+
+  const say = useCallback((text, wasInstant = false) => {
+    setAnswer(text || "");
+    setInstant(!!text && wasInstant);
+  }, []);
+
   const goStep = useCallback((n) => {
     const t = Math.max(0, Math.min(total - 1, n));
-    iRef.current = t; setI(t); setAnswer(""); return t;
-  }, [total]);
+    iRef.current = t; setI(t); say(""); return t;
+  }, [total, say]);
 
   const ingredientsLine = useCallback(() => {
     const names = recipe.needs.map(n => E.ref(n.id).name.toLowerCase());
@@ -108,21 +151,35 @@ export default function CookMode() {
           else if (c.cmd === "ingredients") { await speak(ingredientsLine()); }
           else if (c.cmd === "timer")  {
             const s = recipe.steps[iRef.current];
-            if (s.minutes >= 3) { ui.startTimer(s.minutes, s.do.slice(0, 40)); await speak(`Timer on for ${s.minutes} minutes.`); }
+            if (c.minutes) { ui.startTimer(c.minutes, s.do.slice(0, 40)); await speak(`Timer on for ${spokenMinutes(c.minutes)}.`); }
+            else if (s.minutes >= 3) { ui.startTimer(s.minutes, s.do.slice(0, 40)); await speak(`Timer on for ${s.minutes} minutes.`); }
             else await speak("This step is quick — you watch it rather than time it. Tell me how long if you want a timer.");
           }
           return hearNext();
         }
 
-        // A real question — the chef answers out loud, shown as a short caption.
+        // A real question. Ask the server whether it already wrote this answer
+        // while we were chopping — a hit is instant and costs the model
+        // nothing. A miss returns null and falls straight through, which is the
+        // right way round: a two-second wait is cheap and a confidently wrong
+        // parked answer, at the hob, is not.
         setVstate("thinking");
+        const parked = await api.quickAnswer(recipe.id, iRef.current, said);
+        if (!liveRef.current) return;
+        if (parked?.answer) {
+          say(parked.answer, true);
+          setVstate("speaking");
+          await speak(parked.answer);
+          return hearNext();
+        }
+
         const reply = await sendRef.current(said);
-        setAnswer(reply || "");
+        say(reply || "");
         hearNext();
       },
-      onError: () => { if (liveRef.current) setTimeout(hearNext, 800); },
+      onError: () => { listenRef.current = null; if (liveRef.current) setTimeout(hearNext, 800); },
     });
-  }, [recipe, total, useServer, goStep, ingredientsLine, finish]); // eslint-disable-line
+  }, [recipe, total, useServer, goStep, ingredientsLine, finish, say]); // eslint-disable-line
 
   const startLive = useCallback(() => {
     if (!useServer) { ui.say("Turn on the local voice (Whisper + Kokoro) to cook hands-free."); return; }
@@ -137,6 +194,7 @@ export default function CookMode() {
     listenRef.current = null;
     sq.cancel();                    // the queue holds the sentences still to come
     voice.stopSpeaking();           // this only ever stopped the one being said
+    voice.releaseMic();             // one microphone per session; this is where it goes back
   }
 
   useEffect(() => {
@@ -144,14 +202,39 @@ export default function CookMode() {
     return () => stopLive();
   }, [useServer, ui.server.chat]); // eslint-disable-line
 
+  /* Answers written while they chop.
+
+     Delayed by two and a half seconds, so tapping "next" three times in a row
+     starts one job rather than three; and skipped entirely while the chef is
+     busy, because a background job racing a foreground one on the same local
+     model makes both of them slower — which is the lag this whole file is
+     trying to remove, not add to.
+
+     This step and the next: you almost always walk forwards, and the answers
+     for the step you are ABOUT to reach are the ones worth having ready. */
+  useEffect(() => {
+    if (!ui.server.chat || busy) return;
+    const t = setTimeout(() => {
+      api.prefetchStep(recipe, i, serves);
+      if (i + 1 < total) api.prefetchStep(recipe, i + 1, serves);
+    }, 2500);
+    return () => clearTimeout(t);
+  }, [i, total, recipe, serves, ui.server.chat, busy]);
+
   const askTyped = async (e) => {
     e?.preventDefault?.();
     const q = typed.trim();
     if (!q) return;
     setTyped("");
     setVstate("thinking");
+    const parked = await api.quickAnswer(recipe.id, iRef.current, q);
+    if (parked?.answer) {
+      say(parked.answer, true);
+      setVstate(live ? "listening" : "");
+      return;
+    }
     const reply = await chat.send(q);
-    setAnswer(reply || "");
+    say(reply || "");
     setVstate(live ? "listening" : "");
   };
 
@@ -164,7 +247,7 @@ export default function CookMode() {
     setDrawing(false);
   };
 
-  const held = new Map(k.stock.map(a => [a.id, a]));
+  const inKitchen = useMemo(() => new Map(k.stock.map(a => [a.id, a])), [k.stock]);
   const stateLabel = { listening: "Listening…", thinking: "Thinking…", speaking: "Speaking…" }[vstate];
   const bgAnim = k.prefs.bgAnim !== false;
   const mood = moodFor(recipe.cuisine);
@@ -221,9 +304,14 @@ export default function CookMode() {
             {recipe.needs.map(n => {
               const r = E.ref(n.id);
               const want = E.scale(n.qty, serves, recipe.serves, r.unit);
-              const it = held.get(n.id);
-              const have = it ? E.convert(it.qty, it.unit || r.unit, r.unit, r) : 0;
-              return <li key={n.id} className={"ing" + (have < want && want > 0 ? " is-short" : "")}>
+              /* `held` is the three-way answer: there with an amount, there
+                 with an amount we can't compare (pieces against grams), or not
+                 there. Only the last one is short. The old code treated the
+                 middle case as zero, which is why things sitting on the shelf
+                 were drawn in red. */
+              const have = E.held(inKitchen.get(n.id), r, r.unit);
+              const short = !have.present || (have.sure && have.qty < want && want > 0);
+              return <li key={n.id} className={"ing" + (short ? " is-short" : "")}>
                 <span className="ing-qty">{want > 0 ? E.formatQty(want, r.unit) : "some"}</span>
                 <span className="ing-name">{r.name}{n.prep && <small>{n.prep}</small>}</span></li>;
             })}
@@ -270,12 +358,15 @@ export default function CookMode() {
           {step.why && <p className="cook-why">{step.why}</p>}
         </div>
 
-        {pictures[i] && <img className="cook-pic" src={pictures[i]} alt={`What “${step.do}” should look like`} />}
+        {pictures[i] && <img className="cook-pic" src={pictures[i]} alt={`What “${step.do}” should look like`}
+                              width="512" height="512" decoding="async" />}
 
         {answer && (
-          <div className="cook-answer">
+          <div className={"cook-answer" + (instant ? " is-instant" : "")}>
             <span className="cook-answer-ic"><Icon name="chef" size={20} /></span>
-            <p>{answer}</p>
+            <p>{answer}
+              {instant && <span className="answer-instant" title="Written while you were chopping">ready</span>}
+            </p>
           </div>
         )}
 
@@ -346,6 +437,12 @@ function stepBrief(s, idx, total, ask = true) {
   const cue = s.cue ? ` Look for ${s.cue.toLowerCase()}.` : "";
   const prompt = idx + 1 === total ? " And that's it — enjoy." : " Tell me when that's done.";
   return lead + body + cue + (ask ? prompt : "");
+}
+
+function spokenMinutes(m) {
+  if (m < 1) return `${Math.round(m * 60)} seconds`;
+  if (m >= 60 && m % 60 === 0) return m === 60 ? "an hour" : `${m / 60} hours`;
+  return m === 1 ? "one minute" : `${m} minutes`;
 }
 
 function keyPoints(text) {

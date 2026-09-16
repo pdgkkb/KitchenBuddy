@@ -28,6 +28,7 @@ import base64
 import importlib.util
 import random
 import secrets
+import sys
 from pathlib import Path
 
 import httpx
@@ -297,7 +298,9 @@ def make_speech_checked(s: Settings) -> tuple[object | None, str | None]:
                 return None, (
                     f"Local speaking needs the '{gone}' package. Install with:  "
                     'pip install kokoro soundfile "misaki[en]"   '
-                    "(and `brew install espeak-ng` for the phonemiser)"
+                    + ("(and espeak-ng for the phonemiser — see README-Windows.md)"
+                       if sys.platform == "win32" else
+                       "(and `brew install espeak-ng` for the phonemiser)")
                 )
         try:
             from .speech_local import LocalSpeech

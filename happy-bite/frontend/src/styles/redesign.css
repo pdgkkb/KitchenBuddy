@@ -1,45 +1,11 @@
 /* Happy Bite — redesign layer (v2: warmer, livelier, professional).
 
    Loaded AFTER tokens.css and app.css, so it overrides them without touching
-   the originals (delete the import in main.jsx to revert). Three jobs:
-   1) a warmer, more appetising palette + depth;
+   the originals. Every colour, shadow and size comes from tokens.css; motion
+   and interaction states live in motion.css. Three jobs:
+   1) depth: layered shadows, light edges, glass on floating chrome;
    2) a living, animated colour field behind everything;
    3) a reworked Today screen and a layout that fills a laptop screen. */
-
-/* ---------------------------------------------------------------- tokens */
-:root {
-  --ground:        #F5F4EE;          /* warm oat, not clinical grey */
-  --surface:       #FFFFFF;
-  --surface-sunk:  #EFEDE4;
-  --line:          #E7E4D8;
-  --ring-track:    #ECE9DE;
-
-  --ink:           #1E2A21;          /* warm pine-black */
-  --ink-soft:      #5E685C;
-  --ink-faint:     #9AA394;
-
-  --mint:          #2FBE8B;          /* fresh herb green — the brand */
-  --mint-deep:     #0C7A56;
-  --mint-wash:     #E2F5EC;
-  --sky:           #3AA7E0;
-  --sky-wash:      #E4F2FB;
-  --peach:         #F59E4D;          /* warm — used generously now */
-  --peach-wash:    #FDEEDD;
-  --tomato:        #EA5B4B;          /* appetising warm red accent */
-  --butter:        #F6E4AC;
-  --coral:         #EF5468;          /* reserved: goes off soon */
-  --coral-wash:    #FCE6E9;
-
-  --r-xl: 30px; --r-lg: 24px; --r-md: 16px; --r-sm: 12px;
-
-  --lift:    0 1px 2px rgba(30,42,33,.05), 0 14px 32px -16px rgba(30,42,33,.20);
-  --lift-lg: 0 3px 8px rgba(30,42,33,.07), 0 34px 70px -26px rgba(30,42,33,.34);
-
-  --grad-mint:   linear-gradient(135deg, #37D29C, #159A6E);
-  --grad-warm:   linear-gradient(135deg, #FBB360, #F0803E);
-  --grad-fresh:  linear-gradient(120deg, #2FBE8B 0%, #38B0C4 60%, #3AA7E0 100%);
-  --frame: 1160px;
-}
 
 /* ---------------------------------------------------------------- living background
    A calm ground colour, with two slow-drifting fields of coloured light on a
@@ -58,8 +24,11 @@ body::before {
     radial-gradient(42% 44% at 72% 82%, rgba(245,158,77,.46), transparent 62%),
     radial-gradient(36% 40% at 26% 88%, rgba(234,91,75,.34), transparent 60%);
   filter: blur(26px) saturate(1.15);
-  animation: drift 22s ease-in-out infinite alternate, hue 40s linear infinite;
-  will-change: transform, filter;
+  /* transform only: the blurred layer is painted once and moved by the
+     compositor. (An animated hue-rotate here repainted a full-screen blur on
+     every frame, forever.) */
+  animation: drift 22s ease-in-out infinite alternate;
+  will-change: transform;
 }
 body::after {
   content: "";
@@ -82,26 +51,24 @@ body::after {
   0%   { transform: translate3d(0,0,0) scale(1.08) rotate(0deg); }
   100% { transform: translate3d(-6%, 5%, 0) scale(1) rotate(-6deg); }
 }
-@keyframes hue {
-  0%   { filter: blur(26px) saturate(1.15) hue-rotate(0deg); }
-  100% { filter: blur(26px) saturate(1.15) hue-rotate(360deg); }
-}
 
-/* Frosted, translucent surfaces so the colour field glows through the gaps */
+/* Translucent surfaces so the colour field glows through the gaps. No
+   backdrop-filter: on every row and card it re-blurred the moving background
+   once per element per frame. The field is already blurred, so a slightly
+   more opaque fill looks the same for none of the cost. */
 .dish-card, .table-strip, .dash-rings, .panel, .tile, .rcard, .make, .week, .ideas, .score-part, .rows .row {
-  background: rgba(255,255,255,.86);
-  backdrop-filter: blur(8px);
-  box-shadow: var(--lift);
-  border: 1px solid rgba(255,255,255,.55);
+  background: rgba(255,255,255,.9);
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--border-highlight);
 }
-.dish-card { box-shadow: var(--lift-lg); border: 0; }
+.dish-card { box-shadow: var(--shadow-xl); border: 0; }
 
 /* ---------------------------------------------------------------- buttons & chips */
-.btn-primary { background: var(--grad-mint); color: #05231A;
-  box-shadow: 0 10px 22px -8px rgba(47,190,139,.6); }
-.btn-primary:active { filter: brightness(.95); }
-.chip { background: rgba(255,255,255,.8); border-color: var(--line); }
-.chip.is-on { color: #05231A; }
+.btn-primary { background: var(--grad-primary); color: var(--text-on-primary);
+  box-shadow: var(--shadow-glow-primary), inset 0 1px 0 rgba(255,255,255,.35); }
+.btn-ghost { background: var(--bg-surface); border-color: var(--border); box-shadow: var(--shadow-xs); }
+.chip { background: rgba(255,255,255,.8); border-color: var(--border); }
+.chip.is-on { color: var(--text-on-primary); box-shadow: 0 6px 16px -8px color-mix(in srgb, var(--tint, var(--primary)) 80%, transparent); }
 
 /* Rows: soft cards with space */
 .rows { display: flex; flex-direction: column; gap: 8px; }
@@ -109,26 +76,25 @@ body::after {
 .rows .row:active { background: var(--surface-sunk); }
 
 /* ---------------------------------------------------------------- TODAY */
-.today-date { text-transform: uppercase; letter-spacing: .14em; font-weight: 700;
-  font-size: 13px; color: var(--peach); }
+.today-date { text-transform: uppercase; letter-spacing: var(--track-eyebrow); font-weight: var(--fw-bold);
+  font-size: var(--fs-eyebrow); color: var(--accent-strong); }
 .today-head .screen-title, .screen-title {
-  font-weight: 800; letter-spacing: -0.03em;
+  font-weight: var(--fw-black); letter-spacing: var(--track-display); text-wrap: balance;
 }
-/* "Tonight" gets an appetising gradient wordmark */
+/* "Tonight" gets the gradient wordmark — the dark end of the brand, so it stays AA */
 .today-head .screen-title {
-  font-size: clamp(34px, 7vw, 52px); line-height: 1.02;
-  background: var(--grad-fresh); -webkit-background-clip: text; background-clip: text;
+  font-size: var(--fs-hero); line-height: var(--lh-tight); letter-spacing: var(--track-hero);
+  background: var(--grad-text); -webkit-background-clip: text; background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 
 .week { background: rgba(255,255,255,.8); border-radius: var(--r-lg); }
 
 .askbar-input {
-  background: rgba(255,255,255,.9); border-color: transparent;
-  box-shadow: 0 2px 10px -4px rgba(30,42,33,.15), inset 0 0 0 2px rgba(47,190,139,.12);
-  font-size: 21px;
+  background: rgba(255,255,255,.92); border-color: var(--border-highlight);
+  box-shadow: var(--shadow-sm);
+  font-size: var(--fs-lead);
 }
-.askbar-input:focus { box-shadow: 0 6px 18px -6px rgba(47,190,139,.35), inset 0 0 0 2px var(--mint); }
 
 /* The dish hero — the star of the screen */
 .dish-card { border-radius: var(--r-xl); }
@@ -137,16 +103,16 @@ body::after {
 @keyframes kenburns { from { transform: scale(1.02); } to { transform: scale(1.1); } }
 .dish-overlay { padding: 90px 26px 22px;
   background: linear-gradient(transparent, rgba(10,28,21,.28) 42%, rgba(10,28,21,.85)); }
-.dish-name { font-size: clamp(30px, 5vw, 46px); letter-spacing: -0.025em; }
+.dish-name { font-size: var(--fs-display); letter-spacing: var(--track-display); line-height: var(--lh-tight); }
 .tag { background: rgba(255,255,255,.24); backdrop-filter: blur(8px); font-weight: 650; }
-.tag-mint { background: var(--mint); color: #05231A; }
+.tag-mint { background: var(--primary); color: var(--text-on-primary); }
 .match { padding: 20px 22px; }
 .reason.is-warm .reason-head { color: var(--tomato); }
 
 /* Dashboard */
-.section-title { letter-spacing: -0.02em; font-weight: 800; }
+.section-title { letter-spacing: var(--track-title); font-weight: var(--fw-black); margin-top: var(--section-gap); }
 .tile { border-radius: var(--r-lg); padding: 20px; position: relative; overflow: hidden; }
-.tile-value { font-size: 46px; }
+.tile-value { font-size: clamp(38px, 30px + 1.4vw, 48px); letter-spacing: var(--track-display); }
 .tile::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 4px; background: var(--grad-mint); }
 .tile:nth-child(2)::after { background: var(--grad-fresh); }
 .tile:nth-child(3)::after { background: var(--grad-warm); }
@@ -155,7 +121,7 @@ body::after {
 .make { background: rgba(255,255,255,.85); }
 .rcard { border-radius: var(--r-lg); padding: 12px; gap: 18px; }
 .rcard-img { width: 104px; height: 104px; border-radius: var(--r-md); }
-.rcard-name { font-size: 21px; }
+.rcard-name { font-size: clamp(19px, 18px + .3vw, 21px); letter-spacing: var(--track-body); }
 
 /* ---------------------------------------------------------------- floating nav */
 .tabs {
@@ -163,31 +129,25 @@ body::after {
   width: min(560px, calc(100% - 24px));
   bottom: calc(14px + env(safe-area-inset-bottom));
   height: 74px; padding-bottom: 0;
-  border: 1px solid rgba(255,255,255,.6);
+  border: 1px solid var(--glass-border);
   border-radius: 26px;
-  background: rgba(255,255,255,.7);
-  backdrop-filter: blur(18px) saturate(1.4);
-  box-shadow: 0 20px 44px -18px rgba(30,42,33,.5);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-xl), inset 0 1px 0 rgba(255,255,255,.6);
 }
 .main { padding-bottom: calc(74px + 48px + env(safe-area-inset-bottom)); }
-.tab[aria-current="page"] { color: var(--mint-deep); }
-.tab-fab { background: var(--grad-mint); box-shadow: 0 12px 26px -6px rgba(47,190,139,.65);
+.tab[aria-current="page"] { color: var(--primary-strong); }
+.tab-fab { background: var(--grad-primary); color: var(--text-on-primary); box-shadow: var(--shadow-glow-primary);
   animation: bob 4s ease-in-out infinite; }
 @keyframes bob { 50% { transform: translateY(-3px); } }
 .tab-fab.is-open { animation: none; }
 .tray { bottom: calc(74px + 26px + env(safe-area-inset-bottom)); }
 
-/* ---------------------------------------------------------------- micro-interactions */
-@media (hover: hover) {
-  .rcard, .tile, .make, .table-strip { transition: transform .18s ease, box-shadow .18s ease; }
-  .rcard:hover, .make:hover, .table-strip:hover { transform: translateY(-3px); box-shadow: var(--lift-lg); }
-  .btn-primary:hover { filter: brightness(1.03); }
-}
-
 /* ================================================================ DESKTOP
    Fill the screen instead of a phone-width column. */
 @media (min-width: 900px) {
-  .screen { max-width: var(--frame); padding-left: 32px; padding-right: 32px; }
+  .screen { max-width: var(--frame); padding-left: var(--gutter); padding-right: var(--gutter); }
 
   .cards { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
   .rcard { position: relative; flex-direction: column; align-items: stretch; text-align: left; }
@@ -229,24 +189,15 @@ body::after {
 .agent { position: fixed; right: 18px; z-index: 33;
   bottom: calc(100px + env(safe-area-inset-bottom));
   display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
-.agent-fab { width: 62px; height: 62px; border-radius: 50%; display: grid; place-items: center;
-  background: var(--grad-mint); color: #05231A;
-  box-shadow: 0 14px 30px -8px rgba(47,190,139,.7); transition: transform .15s ease; }
-.agent-fab:active { transform: scale(.92); }
-.agent-fab.is-live { color: #fff; animation: apulse 1.2s ease-in-out infinite; }
+.agent-fab { position: relative; width: 62px; height: 62px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--grad-primary); color: var(--text-on-primary); box-shadow: var(--shadow-glow-primary); }
+.agent-fab.is-live { color: var(--text-on-primary); }
+.agent-fab.is-live::after { content: ""; position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
+  box-shadow: 0 0 0 14px rgba(239,84,104,.15); opacity: 0; animation: ring-pulse 1.2s ease-in-out infinite; }
 .agent-fab.is-listening { background: var(--mint); }
 .agent-fab.is-thinking { background: var(--sky); }
 .agent-fab.is-speaking { background: var(--peach); }
-@keyframes apulse { 50% { box-shadow: 0 0 0 14px rgba(239,84,104,.15); } }
-.agent-card { max-width: 280px; background: rgba(255,255,255,.94); backdrop-filter: blur(12px);
-  border: 1px solid rgba(255,255,255,.6); border-radius: 18px; padding: 12px 14px; box-shadow: var(--lift); }
-.agent-state { font-weight: 750; font-size: 14px; display: inline-flex; align-items: center; gap: 8px; }
-.agent-state::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--ink-faint); }
-.agent-state.is-listening::before { background: var(--mint); animation: vpulse 1s ease-in-out infinite; }
-.agent-state.is-thinking::before { background: var(--sky); animation: vpulse 1s ease-in-out infinite; }
-.agent-state.is-speaking::before { background: var(--peach); animation: vpulse .7s ease-in-out infinite; }
-.agent-said { margin: 6px 0 0; font-size: 14px; color: var(--ink-soft); line-height: 1.4; }
-@media (prefers-reduced-motion: reduce) { .agent-fab, .agent-state::before { animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { .agent-fab, .agent-fab::after { animation: none !important; } }
 
 /* ================================================================ WIDE RECIPE SHEET
    The recipe opens near-full-width: photo + what-you-need on the LEFT, the
@@ -305,23 +256,22 @@ body::after {
 .cook-dock-btn {
   position: relative; display: inline-flex; align-items: center; gap: 10px;
   padding: 12px 18px 12px 16px; border-radius: 999px;
-  background: var(--grad-mint); color: #05231A; font-weight: 700; font-size: 15px;
-  box-shadow: 0 16px 34px -10px rgba(47,190,139,.75);
+  background: var(--grad-primary); color: var(--text-on-primary); font-weight: 700; font-size: 15px;
+  box-shadow: var(--shadow-glow-primary);
 }
 .cook-dock-btn .cook-dock-text b { font-weight: 800; }
 .cook-dock-pulse {
   position: absolute; inset: 0; border-radius: 999px; pointer-events: none;
-  box-shadow: 0 0 0 0 rgba(47,190,139,.55);
+  border: 3px solid rgba(47,190,139,.55);
   animation: dockpulse 1.6s ease-out infinite;
 }
 @keyframes dockpulse {
-  0%   { box-shadow: 0 0 0 0 rgba(47,190,139,.55); }
-  70%  { box-shadow: 0 0 0 18px rgba(47,190,139,0); }
-  100% { box-shadow: 0 0 0 0 rgba(47,190,139,0); }
+  0%        { transform: scale(1);         opacity: 1; }
+  70%, 100% { transform: scale(1.12, 1.5); opacity: 0; }
 }
 .cook-dock-x {
   width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center;
-  background: rgba(255,255,255,.92); color: var(--ink); box-shadow: var(--lift);
+  background: var(--glass-bg-strong); color: var(--text); box-shadow: var(--shadow-md);
 }
 @media (max-width: 460px) {
   .cook-dock-btn { font-size: 14px; padding: 11px 14px; }
@@ -345,8 +295,7 @@ body::after {
 
 .cook.bg-on { background: var(--m-base); }
 /* content rides above the light */
-.cook > .cook-head, .cook > .cook-live, .cook > .cook-switch, .cook > .cook-body,
-.cook > .cook-stage, .cook > .cook-ask { position: relative; z-index: 1; }
+.cook > .cook-head, .cook > .cook-live, .cook > .cook-stage, .cook > .cook-ask { position: relative; z-index: 1; }
 
 /* ---------------------------------------------------------------- step-focused cook mode */
 .cook-solo { display: flex; flex-direction: column; }
@@ -361,7 +310,7 @@ body::after {
 .cook-recipe-summary b { color: var(--mint-deep); }
 .cook-recipe-summary small { color: var(--ink-soft); }
 .cook-stepno { margin: 0; font-weight: 800; letter-spacing: .12em; text-transform: uppercase;
-  font-size: 12px; color: var(--ink-faint); }
+  font-size: var(--fs-eyebrow); color: var(--text-subtle); }
 .cook-step-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .cook-percent { font-size: 13px; font-weight: 750; color: var(--mint-deep); }
 .progress button { overflow: visible; }
@@ -412,9 +361,12 @@ body::after {
 }
 
 .cook-bg { position: absolute; inset: 0; overflow: hidden; z-index: 0; pointer-events: none; }
+/* No mix-blend-mode: blending three screen-sized blurred layers made the
+   compositor redo them every frame, on the GPU the model is using. A lower
+   opacity on the light ground looks nearly the same. */
 .cook-bg span {
   position: absolute; border-radius: 50%; filter: blur(60px);
-  opacity: .5; mix-blend-mode: multiply; will-change: transform;
+  opacity: .38; will-change: transform;
 }
 .cook-bg span:nth-child(1) { width: 60vmax; height: 60vmax; left: -12vmax; top: -16vmax;
   background: radial-gradient(circle, var(--m1), transparent 70%); animation: cbA 16s ease-in-out infinite alternate; }
@@ -425,6 +377,10 @@ body::after {
 @keyframes cbA { to { transform: translate(13vmax, 9vmax) scale(1.22) rotate(32deg); } }
 @keyframes cbB { to { transform: translate(-15vmax, 7vmax) scale(1.16) rotate(-26deg); } }
 @keyframes cbC { to { transform: translate(9vmax, -11vmax) scale(1.26) rotate(22deg); } }
+
+/* Cooking mode covers the whole page: the living background behind it is
+   taken out entirely rather than animated where nobody can see it. */
+body.is-cooking::before, body.is-cooking::after { display: none; }
 
 /* Global off-switch (button or "turn off the animation") stops every motion. */
 body.anim-off::before, body.anim-off::after { animation: none !important; }

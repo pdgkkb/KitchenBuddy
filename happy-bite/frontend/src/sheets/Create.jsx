@@ -7,7 +7,7 @@
    by a narration of the phases, and a failure leaves that narration on screen
    so the error has somewhere to sit. */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as E from "../core/engine.js";
 import * as api from "../lib/api.js";
 import { useKitchen, stockForServer } from "../state/kitchen.jsx";
@@ -35,8 +35,28 @@ export function CreateSheet({ options: initialOptions = null, autoGenerate = fal
   const on = ui.server.recipes;
   const soon = k.stock.filter(a => E.daysLeft(a) <= 3).map(a => E.ref(a.id).name.toLowerCase());
 
+  /* TWO REQUESTS, ONE RECIPE.
+     ----------------------------------------------------------------------
+     LM Studio showed two "Generating" rows for one recipe, the same prompt,
+     the same token count, started together. The machine wrote the recipe
+     twice, at half the speed, and threw one away.
+
+     main.jsx renders the app inside <StrictMode>, and in development React 18
+     deliberately mounts, runs effects, cleans up and runs them AGAIN on the
+     same component, to flush out effects that aren't safe to repeat. This one
+     wasn't. Its `!busy` guard reads the `busy` captured when the closure was
+     made — false both times — so setBusy in between changes nothing it can
+     see, and make() fires twice.
+
+     A ref is the guard that works, because it survives that second mount
+     while state does not. */
+  const startedRef = useRef(false);
+  const inFlightRef = useRef(false);
+
   useEffect(() => {
-    if (autoGenerate && !initialOptions && !busy && !error) make();
+    if (startedRef.current) return;
+    startedRef.current = true;
+    if (autoGenerate && !initialOptions && !error) make();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* One dish, one call. This used to ask the model for two ideas, show them,
@@ -45,6 +65,11 @@ export function CreateSheet({ options: initialOptions = null, autoGenerate = fal
      is the single most expensive thing the app does, and choosing between two
      one-line descriptions was never worth it: you can always ask for another. */
   const make = async () => {
+    // Nothing starts a second generation while one is running — not a double
+    // mount, not a double tap, not Retry pressed twice. A minute of this
+    // machine's attention is too expensive to spend twice on the same dish.
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
     setBusy(true);
     setError(null);
     setPhase("method");
@@ -62,9 +87,11 @@ export function CreateSheet({ options: initialOptions = null, autoGenerate = fal
         serves: k.diners.length || 4, custom: k.customs
       }, setStage);
       setBusy(false);
+      inFlightRef.current = false;
       ui.openSheet("draft", { draft: recipe });
     } catch (e) {
       setBusy(false);
+      inFlightRef.current = false;
       setError(e.message);
     }
   };

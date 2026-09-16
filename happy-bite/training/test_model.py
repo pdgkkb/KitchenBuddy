@@ -79,7 +79,7 @@ def main() -> None:
     val = HERE / "data" / "val.jsonl"
     if not val.exists():
         raise SystemExit("No data/val.jsonl — run build_dataset.py first.")
-    rows = [json.loads(l) for l in val.read_text().splitlines()][: args.n]
+    rows = [json.loads(l) for l in val.read_text(encoding="utf-8").splitlines()][: args.n]
 
     tok, model = load(args)
     ok, shown = 0, False

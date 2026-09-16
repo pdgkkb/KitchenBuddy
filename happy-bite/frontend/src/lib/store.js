@@ -23,10 +23,12 @@ function open() {
   });
 }
 
-async function ready() {
-  if (db || inMemory) return;
-  try { db = await open(); }
-  catch (e) { inMemory = true; console.warn("Happy Bite: storage unavailable, session only.", e); }
+// One open for the whole app, however many reads start at once.
+let opening = null;
+function ready() {
+  return opening ??= open()
+    .then(handle => { db = handle; })
+    .catch(e => { inMemory = true; console.warn("Happy Bite: storage unavailable, session only.", e); });
 }
 
 const shelf = (mode) => db.transaction(SHELF, mode).objectStore(SHELF);

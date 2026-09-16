@@ -24,12 +24,24 @@ export function UIProvider({ children }) {
   const [server, setServer] = useState(api.OFF);
   const toastTimer = useRef();
 
-  const refreshServer = useCallback(() => api.status().then(setServer), []);
+  /* Polled every 5 s, but the answer is almost always the same — and a new
+     object in this context re-renders every screen. Keep the old one unless
+     something changed, and don't poll a tab nobody is looking at. */
+  const refreshServer = useCallback(() => api.status().then(next => setServer(prev =>
+    JSON.stringify(prev) === JSON.stringify(next) ? prev : next)), []);
   useEffect(() => {
-    refreshServer();
-    const h = setInterval(refreshServer, 5000);
+    let h = null;
+    const start = () => { if (!h && !document.hidden) { refreshServer(); h = setInterval(refreshServer, 5000); } };
+    const stop = () => { clearInterval(h); h = null; };
+    const onVisibility = () => (document.hidden ? stop() : start());
+    start();
     window.addEventListener("online", refreshServer);
-    return () => { clearInterval(h); window.removeEventListener("online", refreshServer); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      stop();
+      window.removeEventListener("online", refreshServer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [refreshServer]);
 
   const say = useCallback((text) => {

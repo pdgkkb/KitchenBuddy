@@ -13,15 +13,18 @@ household's data — it only relays the instruction.
 
 import json
 import re
+import secrets
+from contextlib import nullcontext
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import actions, prompts
+from . import actions, prompts, template
+from . import context as context_window
 from .actions import KITCHEN_TOOLS
-from .catalog import id_list, ingredients, recipe_book
+from .catalog import id_list, ids_budget, ingredients, recipe_book
 from .config import settings
 from .importer import ImportErrorPublic, fetch, plain_recipe, read_page
 from .recipes import RECIPE_IDEAS_SCHEMA, RECIPE_OPTIONS_SCHEMA, RECIPE_SCHEMA, clean_recipe
@@ -39,6 +42,31 @@ def need(request: Request, name: str, what: str):
     if not s:
         raise HTTPException(503, f"{what} is switched off on the server.")
     return s
+
+
+def ids_for(known: dict, keep=None, limit: int = 0) -> str:
+    """The ingredient-id list, sized for the model that has to read it.
+
+    The whole catalogue is a few hundred entries — comfortably two thousand
+    tokens — pasted in before the model writes a word. On a 128K context that
+    is free. On a model loaded at 4096 it is most of the window, and the answer
+    has nowhere to go; the server refuses the request outright with "the number
+    of tokens to keep from the initial prompt is greater than the context
+    length".
+
+    So: LLM_IDS_CHARS if it is set, otherwise a share of LLM_CONTEXT if that is
+    set, otherwise everything (which is what large-context users want). What
+    gets kept is in catalog.id_list — the kitchen's own ingredients first, then
+    the seasonings, then as much of the rest as fits.
+    """
+    s = settings()
+    limit = limit or int(getattr(s, "llm_ids_chars", 0) or 0)
+    if not limit:
+        # The window the model was actually loaded with — asked of the server
+        # by app/context.py, so it no longer depends on LLM_CONTEXT being set.
+        limit = ids_budget(context_window.current(s),
+                           float(getattr(s, "llm_reserve", 0.35) or 0.35))
+    return id_list(known, keep=keep, limit=limit)
 
 
 # ---------------------------------------------------------------- models
@@ -84,6 +112,10 @@ class GenerateIn(Known):
     stock: list[StockLine] = Field(default_factory=list)
     serves: int = Field(4, ge=1, le=12)
     options: bool = True
+    # Set false to insist on a freshly written recipe even when the corpus has
+    # one that fits. "Surprise me" wants invention; "dinner from what's in the
+    # fridge" does not.
+    template: bool = True
 
 
 class ImportIn(Known):
@@ -136,7 +168,8 @@ async def import_url(request: Request, url: str, known: dict) -> dict:
                                 if page.get(k)}, ensure_ascii=False)
                     if page["kind"] == "structured" else page["text"])
         try:
-            raw = await llm.json(prompts.import_system(id_list(known)), material, RECIPE_SCHEMA)
+            await context_window.refresh(settings())
+            raw = await llm.json(prompts.import_system(ids_for(known)), material, RECIPE_SCHEMA)
             recipe = clean_recipe(raw, known, origin="link")
             if recipe:
                 return {"recipe": {**recipe, "source": source, "remotePhoto": page.get("image")},
@@ -170,8 +203,12 @@ async def recipes_import(body: ImportIn, request: Request):
 # check appeared to happen AFTER reading the kitchen when it is the last thing
 # that happens, not the first. If a stage here stops being a real step in this
 # function, delete it here too rather than leaving it to decorate the wait.
+#
+# "template" only happens when the corpus turned out to have a recipe this
+# kitchen can already cook, so the browser must treat it as optional rather
+# than as a step that is coming.
 STAGES_IDEAS = ["kitchen", "corpus", "ideas"]
-STAGES_METHOD = ["kitchen", "corpus", "method", "check"]
+STAGES_METHOD = ["kitchen", "corpus", "template", "method", "check"]
 
 
 async def _write_recipe(body: GenerateIn, request: Request):
@@ -183,12 +220,18 @@ async def _write_recipe(body: GenerateIn, request: Request):
     worse than no progress report.
     """
     llm = need(request, "llm", "The assistant")
+    s = settings()
+    await context_window.refresh(s)
 
     yield "stage", "kitchen"
     known = ingredients(body.custom)
-    stock = ", ".join(f"{s.id} ({s.qty:g} {s.unit or ''}"
-                      + (f", {s.daysLeft} days left" if s.daysLeft is not None and s.daysLeft <= 3 else "") + ")"
-                      for s in body.stock if s.id in known and s.qty is not None)
+    # Whatever else gets trimmed out of the id list to fit the context window,
+    # the things actually on their shelves stay in. A recipe prompt that omits
+    # the kitchen is worse than no recipe prompt.
+    keep_ids = [s_.id for s_ in body.stock if s_.id in known]
+    stock = ", ".join(f"{s_.id} ({s_.qty:g} {s_.unit or ''}"
+                      + (f", {s_.daysLeft} days left" if s_.daysLeft is not None and s_.daysLeft <= 3 else "") + ")"
+                      for s_ in body.stock if s_.id in known and s_.qty is not None)
     user = body.brief or "Something good for tonight."
     if body.conversation:
         talk = "\n".join(f"{m.role}: {m.content}" for m in body.conversation[-12:])
@@ -196,24 +239,73 @@ async def _write_recipe(body: GenerateIn, request: Request):
 
     yield "stage", "corpus"
     rag = svc(request, "rag")
-    # One reference recipe, not two. Every one of these is prompt the model must
-    # read before it writes anything, and on a local 9B reading is the expensive
-    # part — see RAG_CHARS in prompts.py.
-    retrieved = await rag.search(user + " " + stock, 1) if rag else []
+    stock_names = [str(known[s_.id].get("name", s_.id)) for s_ in body.stock if s_.id in known]
+
+    # ---- Is there already a recipe for this kitchen? -----------------------
+    #
+    # Writing a dish from nothing is the most expensive thing a local model
+    # does here, and it is usually unnecessary: the corpus has hundreds of
+    # thousands of recipes people actually cooked. If one of them uses what is
+    # already on these shelves, the job becomes CONVERSION — map to ids, scale
+    # to the table, split the steps — which is mechanical, far quicker, and
+    # invents nothing. See app/template.py.
+    #
+    # Only for the full method. The two-idea pass is already cheap, and ideas
+    # are the one place invention is the point.
+    candidate = None
+    if not body.options and body.template and getattr(s, "template_enabled", True):
+        candidate = await template.pick(
+            rag, f"{user} {' '.join(stock_names)}", stock_names,
+            floor=float(getattr(s, "template_floor", 0.72) or 0.72),
+            candidates=int(getattr(s, "template_candidates", 8) or 8),
+        )
+
+    if candidate:
+        yield "stage", "template"
+        got = template.cached(candidate["title"], body.serves)
+        if got:
+            # A fresh id every time, or saving the same dinner twice collides
+            # with the copy already in the book.
+            yield "done", {"recipe": {**got, "id": f"tpl_{secrets.token_hex(4)}"}}
+            return
+        try:
+            raw = await llm.json(template.system(ids_for(known, keep_ids), stock, body.serves),
+                                 template.user(candidate, body.brief, body.serves),
+                                 RECIPE_SCHEMA, 1400)
+            yield "stage", "check"
+            recipe = clean_recipe(raw, known, origin="template")
+            if recipe:
+                recipe["basedOn"] = candidate["title"]
+                template.remember(candidate["title"], body.serves, recipe)
+                yield "done", {"recipe": recipe}
+                return
+            print(f"template: {candidate['title']!r} converted into something that "
+                  "didn't hold together — writing one instead")
+        except Exception as e:  # noqa: BLE001
+            # Never fatal. A conversion that fails just means we write one, which
+            # is what this endpoint did before templates existed.
+            print(f"template: converting {candidate['title']!r} failed "
+                  f"({type(e).__name__}: {str(e)[:160]}) — writing one instead")
+
+    # One reference recipe, not two, and none at all when a template was tried:
+    # every one of these is prompt the model must read before it writes anything,
+    # and on a local 9B reading is the expensive part — see RAG_CHARS in
+    # prompts.py.
+    retrieved = await rag.search(user + " " + stock, 1) if (rag and not candidate) else []
 
     yield "stage", "ideas" if body.options else "method"
     try:
         if body.options:
-            raw = await llm.json(prompts.recipe_ideas_system(id_list(known), stock, body.serves, retrieved), user, RECIPE_IDEAS_SCHEMA, 900)
+            raw = await llm.json(prompts.recipe_ideas_system(ids_for(known, keep_ids), stock, body.serves, retrieved), user, RECIPE_IDEAS_SCHEMA, 900)
         else:
-            raw = await llm.json(prompts.recipe_system(id_list(known), stock, body.serves, retrieved), user, RECIPE_SCHEMA, 1800)
+            raw = await llm.json(prompts.recipe_system(ids_for(known, keep_ids), stock, body.serves, retrieved), user, RECIPE_SCHEMA, 1800)
     except Exception as e:  # noqa: BLE001
         # The server's own sentence, not just the exception's class name. A
         # local server that refuses a field answers 400 with a line naming it,
         # and that line is the entire diagnosis — "BadRequestError" on its own
         # sent us hunting for a timeout that wasn't there.
         raise HTTPException(502, f"The assistant didn't come back ({type(e).__name__}): "
-                                 f"{str(e)[:300]}") from None
+                                 f"{str(e)[:700]}") from None
 
     if not body.options:
         yield "stage", "check"
@@ -260,14 +352,16 @@ async def recipes_generate_stream(body: GenerateIn, request: Request):
     fails, the response headers are long gone.
     """
     async def events():
+        pf = svc(request, "prefetch")
         try:
-            async for kind, payload in _write_recipe(body, request):
-                if await request.is_disconnected():
-                    return
-                if kind == "stage":
-                    yield sse({"type": "stage", "key": payload})
-                else:
-                    yield sse({"type": "result", **payload})
+            async with (pf.foreground() if pf else nullcontext()):
+                async for kind, payload in _write_recipe(body, request):
+                    if await request.is_disconnected():
+                        return
+                    if kind == "stage":
+                        yield sse({"type": "stage", "key": payload})
+                    else:
+                        yield sse({"type": "result", **payload})
         except HTTPException as e:
             yield sse({"type": "error", "message": str(e.detail)})
         except Exception as e:  # noqa: BLE001
@@ -284,7 +378,8 @@ async def understand(body: UnderstandIn, request: Request):
     llm = need(request, "llm", "The assistant")
     known = ingredients()
     cuisines = sorted({r["cuisine"] for r in recipe_book()["recipes"]})
-    user = f"{body.text}\n\nValid ingredient ids: {', '.join(known)}"
+    await context_window.refresh(settings())
+    user = f"{body.text}\n\n{ids_for(known)}"
     try:
         out = await llm.json(prompts.UNDERSTAND, user, prompts.understand_schema(cuisines), 400)
     except Exception:  # noqa: BLE001
@@ -314,7 +409,18 @@ def sse(payload: dict) -> str:
 async def chat(body: ChatIn, request: Request):
     llm = need(request, "llm", "The assistant")
     known = ingredients(body.custom)
+    await context_window.refresh(settings())
     last = body.messages[-1].content if body.messages else ""
+    cooking = body.context.mode == "cooking"
+
+    # What must survive the id-list trim here: the kitchen, and — while they are
+    # cooking — the dish's own ingredients, so a substitution question can still
+    # name what is in the pan. prompts.chef_system narrows it further in cooking
+    # mode; this makes sure the narrowing has the right things to narrow to.
+    recipe_ctx = body.context.recipe or {}
+    chat_keep = [s_.id for s_ in body.context.stock if s_.id in known]
+    chat_keep += [n.get("id") for n in (recipe_ctx.get("needs") or []) if isinstance(n, dict)]
+    chat_keep += [n.get("id") for n in (recipe_ctx.get("seasoning") or []) if isinstance(n, dict)]
 
     async def events():
         attachment = None
@@ -322,7 +428,7 @@ async def chat(body: ChatIn, request: Request):
         if link:
             yield sse({"type": "status", "text": "Reading the page…"})
             try:
-                found = await import_url(request, link.group().rstrip(").,"), known)
+                found = await import_url(request, link.group().rstrip(")., "), known)
                 attachment = found["recipe"]
                 yield sse({"type": "attachment", "recipe": attachment, "method": found["method"]})
             except ImportErrorPublic as e:
@@ -330,22 +436,50 @@ async def chat(body: ChatIn, request: Request):
             except Exception as e:  # noqa: BLE001
                 yield sse({"type": "status", "text": f"Couldn't read that page ({type(e).__name__})."})
 
-        rag = svc(request, "rag")
+        # Cooking mode on a model that doesn't use tools: the short hob prompt,
+        # streamed, so the first sentence is spoken while the rest is written.
+        # Background prefetching steps aside for the length of the answer.
+        s = settings()
+        pf = svc(request, "prefetch")
+        if cooking and not getattr(s, "cook_tools", False):
+            system = prompts.cook_system(body.context.model_dump(), known)
+            msgs = [m.model_dump() for m in body.messages][-8:]
+            try:
+                async with (pf.foreground() if pf else nullcontext()):
+                    async for text in llm.stream(system, msgs,
+                                                 max_tokens=int(getattr(s, "cook_answer_tokens", 220) or 220)):
+                        if await request.is_disconnected():
+                            return
+                        yield sse({"type": "delta", "text": text})
+            except Exception as e:  # noqa: BLE001
+                yield sse({"type": "error", "message": f"The assistant stopped ({type(e).__name__})."})
+                return
+            yield sse({"type": "done"})
+            return
+
+        # No corpus lookup while they're at the hob. They are cooking THIS dish:
+        # four other people's recipes are a SQLite query, a few hundred more
+        # tokens for the model to read before every single answer, and nothing
+        # the answer can use. Every question in cooking mode paid for that.
+        rag = None if cooking else svc(request, "rag")
         retrieved = await rag.search(last + " " + (body.context.recipe or {}).get("name", "")) if rag else []
+
         system = prompts.chef_system(body.context.model_dump(), attachment,
-                         ids=id_list(known), customs=body.custom, retrieved=retrieved)
+                                     ids=ids_for(known, chat_keep, int(getattr(s, "llm_chat_ids_chars", 0) or 0)),
+                                     customs=body.custom, retrieved=retrieved)
         msgs = [m.model_dump() for m in body.messages]
         try:
-            if hasattr(llm, "chat_actions"):
-                async for ev in llm.chat_actions(system, msgs, KITCHEN_TOOLS, actions.normalize, known):
-                    if await request.is_disconnected():
-                        return
-                    yield sse(ev)
-            else:
-                async for text in llm.stream(system, msgs):
-                    if await request.is_disconnected():
-                        return
-                    yield sse({"type": "delta", "text": text})
+            async with (pf.foreground() if pf else nullcontext()):
+                if hasattr(llm, "chat_actions"):
+                    async for ev in llm.chat_actions(system, msgs, KITCHEN_TOOLS, actions.normalize, known):
+                        if await request.is_disconnected():
+                            return
+                        yield sse(ev)
+                else:
+                    async for text in llm.stream(system, msgs):
+                        if await request.is_disconnected():
+                            return
+                        yield sse({"type": "delta", "text": text})
         except Exception as e:  # noqa: BLE001
             yield sse({"type": "error", "message": f"The assistant stopped ({type(e).__name__})."})
             return
@@ -365,10 +499,27 @@ async def images(body: ImageIn, request: Request):
     try:
         return {"url": await img.create(prompt)}
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"The picture couldn't be made ({type(e).__name__}).") from None
+        raise HTTPException(502, _blame("Making the picture", e)) from None
 
 
 # ---------------------------------------------------------------- voice
+
+
+def _blame(what: str, e: BaseException) -> str:
+    """Print the whole trace; hand back one line the browser can show.
+
+    `HTTPException(502, f"Voice failed ({type(e).__name__}).")` was a mistake.
+    The class name is the least informative part of an exception — `RuntimeError`
+    tells you nothing, and `from None` deleted the context that did. The trace
+    belongs in the terminal where the server is running, and the message
+    belongs in the response, where it shows up in the browser's network tab.
+    """
+    import traceback
+    print(f"\n--- {what} failed -------------------------------------", flush=True)
+    traceback.print_exc()
+    print("--- end -----------------------------------------------\n", flush=True)
+    return f"{what} failed — {type(e).__name__}: {str(e)[:300]}"
+
 
 @router.post("/speech/say")
 async def speech_say(body: SpeakIn, request: Request):
@@ -377,7 +528,7 @@ async def speech_say(body: SpeakIn, request: Request):
         return Response(await sp.say(body.text, body.voice),
                         media_type=getattr(sp, "mime", "audio/mpeg"))
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"Voice failed ({type(e).__name__}).") from None
+        raise HTTPException(502, _blame("Speaking", e)) from None
 
 
 @router.post("/speech/hear")
@@ -389,4 +540,4 @@ async def speech_hear(audio: UploadFile, request: Request):
     try:
         return {"text": await sp.hear(data, audio.filename or "speech.webm", audio.content_type or "audio/webm")}
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"Couldn't make out the recording ({type(e).__name__}).") from None
+        raise HTTPException(502, _blame("Hearing", e)) from None

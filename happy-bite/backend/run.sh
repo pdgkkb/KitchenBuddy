@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Start the Happy Bite backend, correctly, every time.
 #
-#     cd backend && ./run.sh
+#     cd backend && ./run.sh               # restarts itself when a backend file changes
+#     cd backend && ./run.sh --no-reload   # for cooking: no restarts, so no voice re-warming
 #
+# On Windows use run.ps1.
 # It exists because the failure it prevents is invisible: `uvicorn` on your PATH
 # can be a DIFFERENT Python from the venv you activated. The server then runs
 # under that other interpreter, can't see anything you pip-installed, and
@@ -19,13 +21,15 @@ cd "$(dirname "$0")"
 
 RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; OFF=$'\033[0m'
 PORT="${PORT:-8000}"
+RELOAD="--reload"
+[ "${1:-}" = "--no-reload" ] && RELOAD=""
 
 # ---- 1. the venv must exist and be the one we use -------------------------
 
 if [ ! -x ".venv/bin/python" ]; then
   echo "${RED}No .venv here.${OFF} Create one with a supported Python:"
   echo "    python3.12 -m venv .venv && source .venv/bin/activate"
-  echo "    pip install -r requirements.txt"
+  echo "    pip install -r requirements-mac.txt"
   exit 1
 fi
 
@@ -38,7 +42,7 @@ if [ "$MINOR" -ge 13 ]; then
   echo "wheels for it, so pictures and voice cannot work. Rebuild it on 3.12:"
   echo "    deactivate 2>/dev/null; rm -rf .venv"
   echo "    python3.12 -m venv .venv && source .venv/bin/activate"
-  echo "    pip install -r requirements.txt && ./setup_local.sh"
+  echo "    pip install -r requirements-mac.txt && ./setup_local.sh"
   exit 1
 fi
 
@@ -88,4 +92,5 @@ if ! "$PY" -c "import uvicorn" 2>/dev/null; then
 fi
 
 echo
-exec "$PY" -m uvicorn app.main:app --reload --port "$PORT"
+# shellcheck disable=SC2086
+exec "$PY" -m uvicorn app.main:app $RELOAD --port "$PORT"

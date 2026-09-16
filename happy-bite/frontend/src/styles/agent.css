@@ -1,0 +1,57 @@
+/* Happy Bite — the floating agent, and the one line that says what it is doing.
+
+   A feature people call broken is usually a feature that never says anything.
+   The wake word had no visible state at all: armed, refused, unsupported and
+   switched off all looked the same from the kitchen — silence. */
+
+.agent-hint {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  margin: 0;
+  max-width: 62vw;
+  width: max-content;
+  padding: 8px 13px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--mint-deep, #1f7a56);
+  background: var(--card, rgba(255, 255, 255, 0.92));
+  border: 1px solid var(--line, rgba(0, 0, 0, 0.08));
+  box-shadow: 0 6px 20px rgba(12, 28, 22, 0.1);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  text-align: right;
+}
+
+/* A refusal is a sentence, not a chip: it needs room to be read. */
+.agent-hint.is-bad {
+  border-radius: 14px;
+  max-width: min(320px, 74vw);
+  color: var(--tomato, #c4553a);
+  font-weight: 550;
+  text-align: left;
+}
+
+/* Armed: a slow breath, so you can tell at a glance it is listening for the
+   phrase without it shouting for attention. */
+.agent-fab.is-armed::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  border: 2px solid var(--mint, #2f9e74);
+  opacity: 0.5;
+  animation: agent-breathe 2.6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes agent-breathe {
+  0%, 100% { transform: scale(1);    opacity: 0.45; }
+  50%      { transform: scale(1.09); opacity: 0.12; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-fab.is-armed::after { animation: none; opacity: 0.45; }
+}

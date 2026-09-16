@@ -23,6 +23,9 @@ import importlib.util
 import io
 import json
 import re
+import shutil
+import sys
+from pathlib import Path
 
 # Lines that are never food. Cheap to check, and it keeps the model's input
 # short enough that a 7B answers in one pass.
@@ -86,19 +89,27 @@ class ReceiptError(RuntimeError):
 
 # ------------------------------------------------------------------ step 1: OCR
 
+# The Windows installer puts tesseract here and does not add it to PATH.
+WINDOWS_TESSERACT = Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
+
+
 def ocr_available() -> str | None:
     """None when we can read pictures, otherwise why not."""
+    windows = sys.platform == "win32"
+    install = ("winget install UB-Mannheim.TesseractOCR" if windows
+               else "brew install tesseract tesseract-lang")
     if importlib.util.find_spec("PIL") is None:
         return "Reading receipts needs Pillow:  pip install pillow"
     if importlib.util.find_spec("pytesseract") is None:
         return ("Reading receipts needs Tesseract. Install both halves:  "
-                "brew install tesseract tesseract-lang  &&  pip install pytesseract")
+                f"{install}  &&  pip install pytesseract")
     try:
         import pytesseract
+        if windows and not shutil.which("tesseract") and WINDOWS_TESSERACT.is_file():
+            pytesseract.pytesseract.tesseract_cmd = str(WINDOWS_TESSERACT)
         pytesseract.get_tesseract_version()
     except Exception:
-        return ("The tesseract program isn't on PATH. On a Mac:  "
-                "brew install tesseract tesseract-lang")
+        return f"The tesseract program isn't on PATH. Install it:  {install}"
     return None
 
 

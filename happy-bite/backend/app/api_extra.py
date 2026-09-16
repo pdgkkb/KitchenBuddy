@@ -23,9 +23,10 @@ import sys
 from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 
+from . import context as context_window
 from . import prompts, warmup
 from .adapt import ADAPT_SCHEMA, EQUIPMENT, clean_adaptation, missing_for
-from .catalog import id_list, ingredients
+from .catalog import id_list, ids_budget, ingredients
 from .config import settings
 from .receipt import ReceiptError, ocr_available
 from .receipt import read as read_receipt
@@ -102,13 +103,20 @@ class QuickIn(BaseModel):
 
 @router.post("/cook/prefetch")
 async def cook_prefetch(body: PrefetchIn, request: Request):
-    """Called when a cooking step comes on screen. Fire and forget."""
+    """Called when a cooking step comes on screen. Fire and forget.
+
+    `ensure`, not `prime`. `prime` filled this step AND the next one, which
+    doubled the model work behind a browser that now asks for each step
+    explicitly — so a single "next" started four background jobs on a machine
+    that was also trying to answer a question at the hob. The caller decides
+    what to park; this endpoint parks exactly that.
+    """
     pf = svc(request, "prefetch")
     if not pf:
-        return {"started": False, "ready": 0}
-    pf.prime(body.recipe, body.step, body.serves)
+        return {"started": False, "ready": 0, "why": "Answer prefetching is off on the server."}
+    started = pf.ensure(body.recipe, body.step, body.serves)
     rid = str(body.recipe.get("id") or body.recipe.get("name") or "")
-    return {"started": True, "ready": pf.ready(rid, body.step)}
+    return {"started": bool(started), "ready": pf.ready(rid, body.step)}
 
 
 @router.post("/cook/quick")
@@ -188,8 +196,14 @@ async def recipe_adapt(body: AdaptIn, request: Request):
 
     missing = missing_for(recipe, owned)
     known = ingredients(body.custom)
+    s = settings()
+    # Sized to the loaded context window, like every other prompt (api.ids_for).
+    budget = int(getattr(s, "llm_ids_chars", 0) or 0) or ids_budget(
+        await context_window.refresh(s), float(getattr(s, "llm_reserve", 0.35) or 0.35))
     system = prompts.adapt_system(owned, missing, body.serves or recipe.get("serves") or 4,
-                                  id_list(known))
+                                  id_list(known, limit=budget,
+                                          keep=[n.get("id") for part in ("needs", "seasoning")
+                                                for n in (recipe.get(part) or []) if isinstance(n, dict)]))
     ask = body.question.strip() or (
         f"Can I cook this without {', '.join(missing)}?" if missing
         else "Is there another way to cook this with what I have?")
@@ -218,6 +232,8 @@ async def health_models(request: Request):
     """
     s = settings()
     llm = svc(request, "llm")
+    speech = svc(request, "speech")
+    rag = svc(request, "rag")
     venv = os.environ.get("VIRTUAL_ENV")
     inside = bool(venv and sys.executable.startswith(venv))
     return {
@@ -260,10 +276,15 @@ async def health_models(request: Request):
             "why": why(request, "images"),
         },
         "voice": {
-            "on": bool(svc(request, "speech")),
+            "on": bool(speech),
             "provider": s.speech_provider,
-            "hears": getattr(s, "whisper_model", None),
+            "hears": getattr(s, "stt_engine", None) or getattr(s, "whisper_model", None),
             "speaks": getattr(s, "tts_engine", None),
+            # Which engine actually made a sound, as opposed to which one is
+            # configured. Speaking is a fallback chain (see speech_local.py):
+            # asking for Kokoro and getting the system voice is a normal,
+            # successful outcome, and this is the only place that says so.
+            "speaksNow": (getattr(speech, "_tts_impl", None) or (None, None))[0],
             "why": why(request, "speech"),
         },
         "receipts": {
@@ -276,9 +297,16 @@ async def health_models(request: Request):
             "perStep": getattr(s, "prefetch_count", 4),
         },
         "rag": {
-            "on": bool(svc(request, "rag") and svc(request, "rag").enabled),
-            "ready": bool(svc(request, "rag") and svc(request, "rag").ready),
-            "building": bool(svc(request, "rag") and svc(request, "rag").building),
-            "error": getattr(svc(request, "rag"), "error", None),
+            "on": bool(rag and rag.enabled),
+            "ready": bool(rag and rag.ready),
+            "building": bool(rag and rag.building),
+            "error": getattr(rag, "error", None),
+        },
+        "templates": {
+            "on": bool(getattr(s, "template_enabled", True)),
+            "floor": getattr(s, "template_floor", 0.72),
+            "candidates": getattr(s, "template_candidates", 8),
+            "why": None if (rag and rag.ready) else
+                   "Templates need the corpus index; it isn't ready yet.",
         },
     }

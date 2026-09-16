@@ -71,7 +71,12 @@ export async function readEvents(res, onEvent) {
 /* The same request as generateRecipe, but the server says where it has got to.
    `onStage` is called with the key of each phase as it is actually reached —
    see STAGES_IDEAS / STAGES_METHOD in backend/app/api.py. Resolves with the
-   same body the plain endpoint returns, so callers can fall back to it. */
+   same body the plain endpoint returns, so callers can fall back to it.
+
+   One of the keys is OPTIONAL: "template" only arrives when the corpus turned
+   out to have a recipe this kitchen can already cook, in which case "method"
+   never arrives at all. Anything drawing a list of stages has to treat the two
+   as alternatives rather than as a sequence. */
 export async function generateRecipeStream(body, onStage, signal) {
   const res = await call("/api/recipes/generate/stream", {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -100,6 +105,34 @@ export const makeRecipeImages = (recipe) => post("/api/recipes/images", {
 });
 export const recipeImages = (id) => call(`/api/recipes/images/${encodeURIComponent(id)}`, {}, 10000).then(r => r.json());
 export const clearRecipeImages = (id) => call(`/api/recipes/images/${encodeURIComponent(id)}`, { method: "DELETE" }, 10000).then(r => r.json());
+
+/* ---- Cooking: answers written while you chop ----------------------------
+
+   backend/app/prefetch.py has been complete since it was written, main.py has
+   always constructed it and api_extra.py has always exposed it — and nothing
+   in the browser ever called either endpoint, so every question at the hob
+   took the full model round trip while the machine sat idle between steps.
+   These two functions are the missing wire.
+
+   Both fail SILENTLY, on purpose. A prefetch that doesn't happen is a slower
+   answer, never an error worth putting on a screen in front of someone
+   holding a hot pan. */
+
+export const prefetchStep = (recipe, step, serves) =>
+  post("/api/cook/prefetch", { recipe, step, serves }, 8000).catch(() => null);
+
+/* The parked answer for what they just said, or null to ask the model.
+   204 means "nothing parked that matches" — which is the common case and
+   must not read as a failure. */
+export async function quickAnswer(recipeId, step, question) {
+  try {
+    const res = await call("/api/cook/quick", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ recipeId, step, question })
+    }, 6000);
+    return res.status === 204 ? null : await res.json();
+  } catch { return null; }
+}
 
 export async function say(text) {
   const res = await call("/api/speech/say", {

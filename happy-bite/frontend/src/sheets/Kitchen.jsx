@@ -1,6 +1,6 @@
 /* Sheets that change the kitchen: filters, a quantity, a receipt line. */
 
-import { useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import * as E from "../core/engine.js";
 import { CATEGORIES, COMPLEXITY, CUISINES, INGREDIENTS, MEAL_TYPES } from "../data/index.js";
 import { useKitchen } from "../state/kitchen.jsx";
@@ -83,6 +83,15 @@ export function QuantitySheet({ id }) {
   );
 }
 
+const SHOWN = 60;
+const collator = new Intl.Collator();
+let sorted = { size: -1, ids: [] };
+function sortedIds() {
+  const all = Object.keys(INGREDIENTS);           // INGREDIENTS grows: re-sort only when it has
+  if (all.length !== sorted.size) sorted = { size: all.length, ids: all.sort((a, b) => collator.compare(nameOf(a), nameOf(b))) };
+  return sorted.ids;
+}
+
 export function VerifySheet({ index }) {
   const { k, resolveLine, createProduct } = useKitchen();
   const ui = useUI();
@@ -90,10 +99,15 @@ export function VerifySheet({ index }) {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState(null);
   const [newName, setNewName] = useState("");
-  const ids = useMemo(() => Object.keys(INGREDIENTS)
-    .filter(i => !cat || INGREDIENTS[i].category === cat)
-    .filter(i => !q || nameOf(i).toLowerCase().includes(q.toLowerCase()))
-    .sort((a, b) => nameOf(a).localeCompare(nameOf(b))), [q, cat]);
+  const deferredQ = useDeferredValue(q);
+  // ~3,000 products: sorted once, filtered on a deferred query, and only the
+  // first SHOWN drawn — a list nobody scrolls to the end of isn't worth 3,000 rows.
+  const matches = useMemo(() => {
+    const query = deferredQ.trim().toLowerCase();
+    return sortedIds().filter(i => (!cat || INGREDIENTS[i].category === cat)
+      && (!query || nameOf(i).toLowerCase().includes(query)));
+  }, [deferredQ, cat]);
+  const ids = matches.slice(0, SHOWN);
   if (!line) return null;
   const pick = (id) => { resolveLine(index, id); ui.closeSheet(); };
 
@@ -107,6 +121,7 @@ export function VerifySheet({ index }) {
           <button key={c.id} className={"chip" + (cat === c.id ? " is-on" : "")} style={{ "--tint": c.tint }} onClick={() => setCat(c.id)}>{c.name}</button>
         ))}
       </div>
+      {matches.length > SHOWN && <p className="sub-note">Showing {SHOWN} of {matches.length} — type to narrow it down.</p>}
       <ul className="rows short-list">
         {ids.map(i => (
           <li key={i}><button className="row" onClick={() => pick(i)}>

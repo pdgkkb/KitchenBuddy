@@ -1,0 +1,231 @@
+/* Happy Bite — motion and interaction layer.
+
+   Imported LAST in main.jsx, so these states win over the look in
+   app.css / redesign.css without raising specificity anywhere.
+
+   Rules this file keeps:
+   • Anything that runs often or for long (entrances, loops, hover lifts)
+     animates transform and opacity only — composited, no layout, no repaint.
+     Shadows that "grow" on hover are a second shadow on a pseudo-element
+     whose opacity fades in; the box-shadow itself never animates.
+   • The single exception is an input gaining focus: border and ring change
+     over 200ms on one element, once, at the user's request.
+   • Entrances use `animation-fill-mode: backwards`, never `both`: a finished
+     animation that keeps holding `transform` silently cancels every
+     :hover / :active transform on that element afterwards.
+   • Exits are not animated. React unmounts at once, and faking an exit would
+     mean delaying the unmount everywhere — a slower app to look smoother.
+   • prefers-reduced-motion and the in-app "turn off the animation" switch
+     both stop decorative motion; progress indicators keep a slow, travel-free
+     heartbeat so a slow model is never mistaken for a frozen app. */
+
+
+/* ============================================================== keyframes */
+
+@keyframes hb-fade   { from { opacity: 0; } }
+@keyframes hb-rise   { from { opacity: 0; transform: translate3d(0, 18px, 0); } }
+@keyframes hb-rise-s { from { opacity: 0; transform: translate3d(0, 8px, 0); } }
+@keyframes hb-pop    { from { opacity: 0; transform: scale(.96); } }
+@keyframes hb-sheet  { from { opacity: 0; transform: translate3d(0, 56px, 0); } }
+@keyframes hb-dialog { from { opacity: 0; transform: translate3d(0, 18px, 0) scale(.97); } }
+@keyframes hb-grow-y { from { transform: scaleY(0); } }
+@keyframes hb-knob   { from { transform: scale(0); } }
+/* Elements centred with translateX(-50%) must keep it in every frame. */
+@keyframes hb-rise-centred { from { opacity: 0; transform: translate3d(-50%, 16px, 0) scale(.96); } }
+
+
+/* ============================================================== focus */
+
+/* One ring, everywhere, drawn outside the element and following its radius. */
+:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 3px; }
+:focus:not(:focus-visible) { outline: none; }
+
+
+/* ============================================================== inputs */
+
+.field, .askbar-input, .composer-input, .cook-ask-input {
+  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+.field::placeholder, .askbar-input::placeholder, .composer-input::placeholder, .cook-ask-input::placeholder {
+  color: var(--text-subtle); opacity: 1;
+}
+@media (hover: hover) and (pointer: fine) {
+  .field:hover:not(:focus), .askbar-input:hover:not(:focus), .composer-input:hover:not(:focus) {
+    border-color: var(--border-strong);
+  }
+}
+.field:focus, .askbar-input:focus, .composer-input:focus, .cook-ask-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 24%, transparent), var(--shadow-sm);
+}
+
+
+/* ============================================================== tappables */
+
+.btn, .chip, .icon-btn, .tray-item, .make, .rcard, .table-strip, button.tile, .verdict,
+.step-btn, .rows button.row, .agent-fab, .cook-dock-btn, .cook-dock-x, .timer-stop, .photo-btn, .link, .tab {
+  transition: transform var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
+}
+
+/* Primary buttons: a sheen that fades in on hover. */
+.btn-primary { position: relative; isolation: isolate; overflow: hidden; }
+.btn-primary::after {
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: var(--grad-sheen); opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+
+/* Cards: the deeper shadow is pre-drawn and faded in, not animated. */
+.make, .rcard, .table-strip, .rows button.row { position: relative; isolation: isolate; }
+.make::before, .rcard::before, .table-strip::before, .rows button.row::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  border-radius: inherit; box-shadow: var(--shadow-lg); opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover, .chip:hover, .icon-btn:hover, .tray-item:hover, .timer-stop:hover,
+  .photo-btn:hover, .cook-dock-x:hover { transform: translate3d(0, -1px, 0); }
+  .btn-primary:hover::after { opacity: 1; }
+
+  .make:hover, .rcard:hover, .table-strip:hover, .verdict:hover,
+  button.tile:hover { transform: translate3d(0, -3px, 0); }
+  .rows button.row:hover { transform: translate3d(0, -2px, 0); }
+  .make:hover::before, .rcard:hover::before, .table-strip:hover::before,
+  .rows button.row:hover::before { opacity: 1; }
+
+  .agent-fab:hover, .cook-dock-btn:hover { transform: scale(1.05); }
+  .link:hover { opacity: .75; }
+  .tab:not([aria-current="page"]):hover { opacity: .8; }
+}
+
+/* Press: quicker than the hover, so it reads as a response, not an animation.
+   After :hover in the file, so pressing wins while the pointer is still over it. */
+.btn:active, .make:active, .rcard:active, .table-strip:active, .verdict:active,
+button.tile:active, .cook-dock-btn:active { transform: scale(.975); transition-duration: var(--dur-instant); }
+.chip:active, .icon-btn:active, .tray-item:active, .timer-stop:active,
+.photo-btn:active, .cook-dock-x:active { transform: scale(.94); transition-duration: var(--dur-instant); }
+.rows button.row:active { transform: scale(.985); transition-duration: var(--dur-instant); }
+.step-btn:active, .agent-fab:active { transform: scale(.9); transition-duration: var(--dur-instant); }
+
+/* The round button in the tab bar: a springy quarter-turn into a close. */
+.tab-fab { transition: transform var(--dur-base) var(--ease-spring); }
+
+
+/* ============================================================== tab bar */
+
+/* A soft pill behind the current tab, scaled in rather than cut in. */
+.tab { position: relative; }
+.tab::before {
+  content: ""; position: absolute; inset: 9px 12%; z-index: -1; border-radius: 18px;
+  background: var(--primary-wash); opacity: 0; transform: scale(.8);
+  transition: opacity var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-spring);
+}
+.tab[aria-current="page"]::before { opacity: 1; transform: none; }
+.tab .icon { transition: transform var(--dur-base) var(--ease-spring); }
+.tab[aria-current="page"] .icon { transform: translate3d(0, -1px, 0) scale(1.06); }
+
+
+/* ============================================================== entrances */
+
+/* Section switching: the tab's screen fades in while its blocks rise in turn. */
+.screen-swap { animation: hb-fade var(--dur-base) var(--ease-out) backwards; }
+.screen > * { animation: hb-rise var(--dur-enter) var(--ease-out) backwards; }
+.screen > :nth-child(2) { animation-delay: calc(var(--stagger) * 1); }
+.screen > :nth-child(3) { animation-delay: calc(var(--stagger) * 2); }
+.screen > :nth-child(4) { animation-delay: calc(var(--stagger) * 3); }
+.screen > :nth-child(5) { animation-delay: calc(var(--stagger) * 4); }
+.screen > :nth-child(6) { animation-delay: calc(var(--stagger) * 5); }
+.screen > :nth-child(n+7) { animation-delay: calc(var(--stagger) * 6); }
+
+/* Grids arrive as a sequence, capped so a long list never waits on itself. */
+.tiles > .tile, .cards > li, .make-row > .make {
+  animation: hb-rise-s var(--dur-slow) var(--ease-out) backwards;
+  animation-delay: calc(var(--stagger) * 2 + var(--i, 0) * 40ms);
+}
+.tiles > :nth-child(2), .cards > li:nth-child(2), .make-row > :nth-child(2) { --i: 1; }
+.tiles > :nth-child(3), .cards > li:nth-child(3) { --i: 2; }
+.tiles > :nth-child(4), .cards > li:nth-child(4) { --i: 3; }
+.cards > li:nth-child(5) { --i: 4; }
+.cards > li:nth-child(6) { --i: 5; }
+.cards > li:nth-child(n+7) { --i: 6; }
+
+/* Charts grow from their baseline; the range knob pops in. */
+.spark-bar, .expiry-bar { transform-origin: bottom; animation: hb-grow-y .6s var(--ease-out) backwards; }
+.expiry-bar { transform-box: fill-box; }
+.spark-bar:nth-child(2) { animation-delay: .05s; }
+.spark-bar:nth-child(3) { animation-delay: .1s; }
+.spark-bar:nth-child(4) { animation-delay: .15s; }
+.spark-bar:nth-child(5) { animation-delay: .2s; }
+.spark-bar:nth-child(6) { animation-delay: .25s; }
+.spark-bar:nth-child(7) { animation-delay: .3s; }
+.range-track > span:not(.range-zero) { animation: hb-fade .5s var(--ease-out) backwards; }
+.range-knob { animation: hb-knob .5s .15s var(--ease-spring) backwards; }
+
+/* Things that appear in place. */
+.ask-pill, .band, .cook-answer, .action-receipt, .consent { animation: hb-pop var(--dur-base) var(--ease-out) backwards; }
+.bubble-row { animation: hb-rise-s var(--dur-base) var(--ease-out) backwards; }
+.timer-bar { animation: hb-rise var(--dur-slow) var(--ease-out) backwards; }
+.agent-hint { animation: hb-rise-s var(--dur-base) var(--ease-out) backwards; }
+
+
+/* ============================================================== overlays */
+
+/* Sheets: rise from the bottom edge on a phone, lift into place as a dialog
+   on a wider screen. The scrim only fades — blurring it would re-blur the
+   whole page on every frame of the living background. */
+.sheet-scrim { animation: hb-fade var(--dur-base) var(--ease-out) backwards; }
+.sheet-panel { animation: hb-sheet var(--dur-slow) var(--ease-out) backwards; }
+@media (min-width: 760px) {
+  .sheet-panel { animation-name: hb-dialog; }
+}
+.sheet-body > * { animation: hb-rise-s var(--dur-slow) var(--ease-out) backwards; animation-delay: 80ms; }
+.sheet-body > :nth-child(n+3) { animation-delay: 130ms; }
+
+/* The action tray unfolds from the button that opened it. */
+.tray-scrim { animation: hb-fade var(--dur-fast) var(--ease-out) backwards; }
+.tray { transform-origin: 50% 100%; animation: hb-rise-centred var(--dur-base) var(--ease-out) backwards; }
+.tray-item { animation: hb-rise-s var(--dur-base) var(--ease-out) backwards; }
+.tray-item:nth-child(2) { animation-delay: 30ms; }
+.tray-item:nth-child(3) { animation-delay: 60ms; }
+.tray-item:nth-child(4) { animation-delay: 90ms; }
+
+/* Full-screen modes: cooking and the chef. */
+.cook, .chatscreen { animation: hb-rise var(--dur-slow) var(--ease-out) backwards; }
+
+.toast { animation: hb-rise-centred var(--dur-base) var(--ease-spring) backwards; }
+.cook-dock { animation: hb-rise-centred var(--dur-base) var(--ease-out) backwards; }
+
+
+/* ============================================================== off switches */
+
+body.anim-off .screen-swap, body.anim-off .screen > *, body.anim-off .tiles > .tile,
+body.anim-off .cards > li, body.anim-off .make-row > .make, body.anim-off .sheet-body > *,
+body.anim-off .tray-item, body.anim-off .bubble-row {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Decorative motion: gone. */
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* Hover and press still change state — just without travel. */
+  .btn:hover, .chip:hover, .icon-btn:hover, .tray-item:hover, .make:hover, .rcard:hover,
+  .table-strip:hover, .verdict:hover, button.tile:hover, .rows button.row:hover,
+  .btn:active, .chip:active, .icon-btn:active, .tray-item:active, .make:active, .rcard:active,
+  .table-strip:active, .verdict:active, button.tile:active, .rows button.row:active,
+  .agent-fab:hover, .agent-fab:active, .cook-dock-btn:hover, .tab[aria-current="page"] .icon {
+    transform: none;
+  }
+  /* Progress keeps a slow heartbeat (see waiting.css): something must move. */
+  .spin, .typing i, .waiting-pan i, .working-dots i, .waiting-stage.is-now .waiting-dot {
+    animation-duration: 3s !important;
+    animation-iteration-count: infinite !important;
+  }
+}

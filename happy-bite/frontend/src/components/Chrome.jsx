@@ -47,13 +47,15 @@ function beep() {
 
 export function TimerBar() {
   const { timer, stopTimer, say } = useUI();
-  const [now, setNow] = useState(Date.now());
+  const secondsLeft = () => (timer ? Math.max(0, Math.ceil((timer.end - Date.now()) / 1000)) : 0);
+  const [left, setLeft] = useState(secondsLeft);
   useEffect(() => {
+    setLeft(secondsLeft());
     if (!timer) return;
-    const h = setInterval(() => setNow(Date.now()), 250);
+    // Checked 4x a second for accuracy; React skips the render unless the second changed.
+    const h = setInterval(() => setLeft(secondsLeft()), 250);
     return () => clearInterval(h);
-  }, [timer]);
-  const left = timer ? Math.max(0, Math.ceil((timer.end - now) / 1000)) : 0;
+  }, [timer]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (timer && left === 0 && !timer.rang) { timer.rang = true; beep(); say("Timer finished: " + timer.label); }
   }, [left, timer, say]);
@@ -71,7 +73,7 @@ export function TimerBar() {
 
 /* The dish picture, or a tinted plate with its initial when there's none.
    The tint comes from the name, so a dish keeps its colour week to week. */
-export function DishImage({ recipe, className = "dish-photo", children }) {
+export function DishImage({ recipe, className = "dish-photo", priority = false, children }) {
   const [broken, setBroken] = useState(false);
   const src = recipe.photo || recipe.remotePhoto;
   useEffect(() => setBroken(false), [src]);
@@ -83,7 +85,8 @@ export function DishImage({ recipe, className = "dish-photo", children }) {
         <path d="M13 20v9a3 3 0 0 0 3 3v13" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" opacity="0.55" />
         <path d="M51 20c-3 0-5 3-5 7s2 6 5 6v12" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" opacity="0.55" />
       </svg>
-      {src && !broken && <img src={src} alt="" loading="lazy" onError={() => setBroken(true)} />}
+      {src && !broken && <img src={src} alt="" decoding="async" onError={() => setBroken(true)}
+                              {...(priority ? { fetchpriority: "high" } : { loading: "lazy" })} />}
       {children}
     </div>
   );

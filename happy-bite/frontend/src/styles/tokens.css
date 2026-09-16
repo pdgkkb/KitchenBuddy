@@ -1,38 +1,67 @@
-/* Happy Bite — design tokens.
-
-   A light reading of a dark health-dashboard look: the same mint score
-   rings, sky and peach companions, butter-to-mint gradient scales and
-   rounded tiles — on a cool mist ground instead of near-black. Pine ink
-   instead of black: softer at this size, and it belongs with the mint.
-   Coral stays reserved for one meaning only: this goes off soon.
+/* Happy Bite — design tokens. The one place colour, type, space, depth and
+   motion are decided; every other stylesheet reads from here.
 
    The constraint that still drives everything: a tired person, standing,
    two metres from the screen, maybe with wet hands. Body text never below
-   18px. Nothing tappable below 56px. */
+   18px. Nothing tappable below 56px. Coral/danger stays reserved for one
+   meaning only: this goes off soon.
+
+   Contrast: every *-strong, --text-* and --text-on-* pairing below was
+   measured against every surface and wash in this file and clears WCAG AA
+   (4.5:1) as body text. Fills (--primary, --secondary, --accent, --danger)
+   are for backgrounds, bars and dots — never for small text on a light
+   surface; use the matching *-strong for that.
+
+   Legacy names (--mint, --ink-soft, --lift …) are aliases at the bottom, so
+   components written against the old palette pick the new one up as-is. */
 
 :root {
-  /* Ground and surfaces */
-  --ground:        #F3F7F6;
-  --surface:       #FFFFFF;
-  --surface-sunk:  #E8EFED;
-  --line:          #D8E3E0;
-  --ring-track:    #E2ECE9;
+  color-scheme: light;
 
-  /* Ink */
-  --ink:           #12302A;
-  --ink-soft:      #526B65;
-  --ink-faint:     #8DA29C;
+  /* ------------------------------------------------------------ brand */
+  --primary:          #2BC08E;   /* emerald: actions, progress, "ready" */
+  --primary-strong:   #047857;   /* emerald as text / icon on light (≥4.5:1) */
+  --primary-wash:     #DDF5EA;
+  --secondary:        #22B3D6;   /* cyan: information, the second ring */
+  --secondary-strong: #0A6680;
+  --secondary-wash:   #E0F3F9;
+  --accent:           #F5A524;   /* warm amber: shopping, warmth, highlights */
+  --accent-strong:    #9A4308;
+  --accent-wash:      #FDF0DC;
+  --danger:           #E5484D;   /* goes off soon: bars, dots, glows */
+  --danger-strong:    #B82E45;   /* the same meaning as text, or under white text */
+  --danger-wash:      #FCE8EA;
+  --butter:           #F6E4AC;   /* the cool end of every scale */
 
-  /* Accents */
-  --mint:          #34C99A;   /* primary action, progress, "ready" */
-  --mint-deep:     #0E7F5E;   /* text on light, focus rings */
-  --mint-wash:     #DDF5EC;
-  --sky:           #3AA7E0;   /* second ring, information */
-  --sky-wash:      #E1F1FA;
-  --peach:         #F4A259;   /* third ring, shopping */
-  --butter:        #F4E4B0;   /* the cool end of every scale */
-  --coral:         #EF5068;   /* goes off soon — never decoration */
-  --coral-wash:    #FDE7EA;
+  /* ------------------------------------------------------------ surfaces */
+  --bg-base:      #F6F5F0;       /* warm oat ground */
+  --bg-surface:   #FFFFFF;       /* cards, rows, fields */
+  --bg-elevated:  #FFFFFF;       /* sheets, trays, menus — same fill, more shadow */
+  --bg-sunken:    #ECEAE1;       /* wells, pressed rows, code */
+  --bg-inverse:   #14201A;       /* toast, timer */
+
+  /* Glass: for the few fixed surfaces that float over moving content (tab
+     bar, tray, toast, sheet header). Never on repeated rows or cards — each
+     blurred element re-blurs the animated background every frame. */
+  --glass-bg:        rgba(255, 255, 255, .72);
+  --glass-bg-strong: rgba(255, 255, 255, .88);
+  --glass-dark:      rgba(20, 32, 26, .86);
+  --glass-border:    rgba(255, 255, 255, .7);
+  --glass-blur:      blur(18px) saturate(1.5);
+
+  /* ------------------------------------------------------------ text */
+  --text-strong:     #101A15;
+  --text:            #1B2620;
+  --text-muted:      #505B52;
+  --text-subtle:     #5B655B;    /* the lightest text allowed anywhere */
+  --text-on-primary: #06261B;    /* on --primary, --secondary, --accent fills */
+  --text-on-inverse: #FFFFFF;
+
+  /* ------------------------------------------------------------ lines */
+  --border:           #E4E1D6;
+  --border-strong:    #CFCABB;
+  --border-highlight: rgba(255, 255, 255, .7);   /* 1px light edge on raised surfaces */
+  --focus-ring:       #047857;
 
   /* Category tints: distinguishable at a glance, never the only signal */
   --cat-produce:   #4DBA6E;
@@ -46,23 +75,125 @@
   --cat-drinks:    #7B8CA9;
   --cat-other:     #98A6A2;
 
-  /* Type: Figtree, bundled with the app — a web font from a CDN would be
-     a silent network call, and this app opens with the cable pulled out. */
-  --face: "Figtree Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --t-display: 760 clamp(34px, 6.4vw, 54px)/1.04 var(--face);
-  --t-title:   720 32px/1.15 var(--face);
-  --t-lead:    600 23px/1.35 var(--face);
-  --t-body:    450 20px/1.45 var(--face);
-  --t-small:   550 18px/1.35 var(--face);
-  --t-tiny:    600 15px/1.2 var(--face);   /* chart labels only, never prose */
+  /* ------------------------------------------------------------ gradients */
+  --grad-primary: linear-gradient(135deg, #3AD6A2 0%, #16A874 100%);
+  --grad-fresh:   linear-gradient(120deg, #2BC08E 0%, #22B3D6 100%);
+  --grad-warm:    linear-gradient(135deg, #FBBF4A 0%, #F07E3C 100%);
+  --grad-text:    linear-gradient(120deg, #047857 0%, #0A6680 100%);  /* AA as text */
+  --grad-sheen:   linear-gradient(180deg, rgba(255, 255, 255, .28), rgba(255, 255, 255, 0) 62%);
+  --scale:        linear-gradient(90deg, var(--butter), #BFEBCF 55%, var(--primary));
 
-  /* Rhythm and shape: radius follows hierarchy — big tiles are rounder */
-  --gap: 22px;
+  /* ------------------------------------------------------------ depth
+     Layered: a tight contact shadow + a wide, soft key-light shadow. */
+  --shadow-xs: 0 1px 2px rgba(20, 32, 26, .06);
+  --shadow-sm: 0 1px 2px rgba(20, 32, 26, .05), 0 4px 12px -4px rgba(20, 32, 26, .10);
+  --shadow-md: 0 1px 2px rgba(20, 32, 26, .05), 0 2px 6px -2px rgba(20, 32, 26, .06),
+               0 12px 28px -12px rgba(20, 32, 26, .20);
+  --shadow-lg: 0 2px 4px rgba(20, 32, 26, .05), 0 6px 14px -6px rgba(20, 32, 26, .10),
+               0 22px 44px -16px rgba(20, 32, 26, .26);
+  --shadow-xl: 0 4px 8px rgba(20, 32, 26, .06), 0 36px 72px -24px rgba(20, 32, 26, .34);
+  --shadow-glow-primary: 0 10px 26px -8px rgba(22, 168, 116, .55);
+  --shadow-glow-danger:  0 0 0 10px rgba(229, 72, 77, .18);
+
+  /* ------------------------------------------------------------ type
+     Fluid between a 360px phone and a 1280px laptop. The floors are the
+     kitchen rules above, not the viewport's opinion. */
+  --face: "Figtree Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --fs-eyebrow: 13px;                                        /* uppercase, tracked, bold only */
+  --fs-tiny:    15px;                                        /* chart labels only, never prose */
+  --fs-small:   clamp(18px, 17.2px + .22vw, 19px);
+  --fs-body:    clamp(18px, 16.4px + .45vw, 20px);
+  --fs-lead:    clamp(20px, 18.4px + .6vw, 24px);
+  --fs-title:   clamp(28px, 22.6px + 1.5vw, 38px);
+  --fs-display: clamp(32px, 22.4px + 2.7vw, 54px);
+  --fs-hero:    clamp(38px, 26px + 3.4vw, 62px);
+
+  --fw-regular: 450;
+  --fw-medium:  560;
+  --fw-semi:    650;
+  --fw-bold:    750;
+  --fw-black:   820;
+
+  --lh-tight:  1.04;
+  --lh-snug:   1.18;
+  --lh-normal: 1.45;
+  --lh-loose:  1.6;
+
+  --track-hero:    -0.035em;
+  --track-display: -0.028em;
+  --track-title:   -0.02em;
+  --track-body:    -0.003em;
+  --track-eyebrow: .14em;
+
+  /* ------------------------------------------------------------ space */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --gutter:      clamp(18px, 3.2vw + 6px, 36px);             /* screen side padding */
+  --section-gap: clamp(32px, 2.4vw + 24px, 56px);            /* between sections */
+
+  /* ------------------------------------------------------------ shape */
+  --r-xs:   8px;
+  --r-sm:   12px;
+  --r-md:   16px;
+  --r-lg:   24px;
+  --r-xl:   30px;
+  --r-full: 999px;
+
+  /* ------------------------------------------------------------ motion */
+  --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);              /* the house curve */
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);            /* small overshoot, for pops */
+  --dur-instant: 120ms;
+  --dur-fast:    200ms;
+  --dur-base:    300ms;
+  --dur-slow:    460ms;
+  --dur-enter:   560ms;
+  --stagger:     55ms;
+
+  /* ------------------------------------------------------------ layout */
   --nav-h: 84px;
-  --r-xl: 28px;
-  --r-lg: 22px;
-  --r-md: 16px;
-  --r-sm: 12px;
-  --lift: 0 1px 2px rgba(18, 48, 42, .05), 0 6px 20px rgba(18, 48, 42, .06);
-  --scale: linear-gradient(90deg, var(--butter), #BFEBCF 55%, var(--mint));
+  --frame: 1160px;
+
+  /* ============================================================ legacy aliases
+     Component CSS predates the names above. Kept as aliases, so nothing has
+     to be rewritten for the new palette to apply. */
+  --ground:       var(--bg-base);
+  --surface:      var(--bg-surface);
+  --surface-sunk: var(--bg-sunken);
+  --line:         var(--border);
+  --ring-track:   #E9E6DB;
+
+  --ink:          var(--text);
+  --ink-soft:     var(--text-muted);
+  --ink-faint:    var(--text-subtle);
+
+  --mint:         var(--primary);
+  --mint-deep:    var(--primary-strong);
+  --mint-wash:    var(--primary-wash);
+  --sky:          var(--secondary);
+  --sky-wash:     var(--secondary-wash);
+  --peach:        var(--accent);
+  --peach-wash:   var(--accent-wash);
+  --tomato:       #A63A22;                                    /* warm red, as text */
+  --coral:        var(--danger-strong);                       /* used as text AND as fill under white */
+  --coral-wash:   var(--danger-wash);
+
+  --lift:         var(--shadow-md);
+  --lift-lg:      var(--shadow-xl);
+  --grad-mint:    var(--grad-primary);
+  --gap:          var(--gutter);
+
+  --t-display: var(--fw-black) var(--fs-display)/var(--lh-tight) var(--face);
+  --t-title:   var(--fw-black) var(--fs-title)/var(--lh-snug) var(--face);
+  --t-lead:    600 var(--fs-lead)/1.35 var(--face);
+  --t-body:    var(--fw-regular) var(--fs-body)/var(--lh-normal) var(--face);
+  --t-small:   550 var(--fs-small)/1.35 var(--face);
+  --t-tiny:    600 var(--fs-tiny)/1.2 var(--face);
 }

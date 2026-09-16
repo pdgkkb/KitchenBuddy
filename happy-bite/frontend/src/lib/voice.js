@@ -12,7 +12,36 @@
                      recogniser, so none of the "aborted" flakiness.
 
    All of it needs a SECURE CONTEXT (https or localhost) and microphone
-   permission (granted once, from a button tap). */
+   permission (granted once, from a button tap).
+
+   WHY COOKING MODE FELT SLOW, AND WHAT THIS FILE HAD TO DO WITH IT
+   ---------------------------------------------------------------
+   Cooking mode listens in a loop: listen, transcribe, answer, listen again.
+   Every single turn used to build the whole audio stack from scratch —
+   getUserMedia, a new AudioContext, a new analyser, a new MediaRecorder — and
+   tear it down again at the end. Two things follow from that, and both were
+   reported as "the app lags in cook mode":
+
+     1. getUserMedia is not free. On macOS it is tens to hundreds of
+        milliseconds of device negotiation, EVERY TURN, before the microphone
+        is even open — a gap in which you have started talking and nothing is
+        recording. That is also why the first word of an answer went missing.
+     2. A browser allows only a handful of AudioContexts at once (Chrome
+        stops at six). close() is asynchronous, so a long session opened them
+        faster than they went away; when the limit was reached the audio graph
+        stopped starting and hands-free just went deaf, with no error.
+
+   So the microphone is now opened ONCE per hands-free session and held: one
+   stream, one AudioContext, one analyser, reused by every turn. Only the
+   MediaRecorder — which is cheap — is per turn. `releaseMic()` closes it when
+   the session ends.
+
+   The level meter moved off requestAnimationFrame too. rAF fires 60 times a
+   second, on the same thread as React and the animated background, to read a
+   number that changes meaningfully about 25 times a second; and the browser
+   throttles or stops it entirely when the tab is backgrounded, which froze
+   voice-activity detection mid-turn on a tablet that dimmed. A 40 ms interval
+   does the same job for a fraction of the work and keeps running. */
 
 import * as api from "./api.js";
 
@@ -84,11 +113,15 @@ export function speak(text, useServer) {
       api.say(clean).then((blob) => {
         // Back from the server. Is anyone still listening for this one?
         if (ticket !== generation) return done();
-        const audio = new Audio(URL.createObjectURL(blob));
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
         current = audio;
-        audio.onended = done;
-        audio.onerror = done;
-        audio.play().catch(() => browserSpeak(clean, done, ticket));
+        // The object URL used to leak one blob per sentence for the whole
+        // session. A cooking session is hundreds of sentences of WAV.
+        const end = () => { try { URL.revokeObjectURL(url); } catch { /* ignore */ } done(); };
+        audio.onended = end;
+        audio.onerror = end;
+        audio.play().catch(() => browserSpeak(clean, end, ticket));
       }).catch(() => browserSpeak(clean, done, ticket));
       return;
     }
@@ -121,6 +154,52 @@ export const LISTEN_REASON = {
   unsupported: "This browser can't listen. Chrome, Edge and Safari can."
 };
 
+/* ---- One microphone, held for the whole hands-free session ---- */
+
+let mic = null;          // { stream, ctx, analyser, buf, mime }
+let micOpening = null;   // so two turns starting at once don't open two mics
+
+const pickMime = () =>
+  ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]
+    .find(t => window.MediaRecorder?.isTypeSupported?.(t)) || "";
+
+const micAlive = () =>
+  !!mic && mic.stream.getTracks().some(t => t.readyState === "live")
+        && mic.ctx.state !== "closed";
+
+async function openMic() {
+  if (micAlive()) return mic;
+  if (micOpening) return micOpening;
+  releaseMic();
+  micOpening = (async () => {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    });
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (ctx.state === "suspended") { try { await ctx.resume(); } catch { /* ignore */ } }
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    ctx.createMediaStreamSource(stream).connect(analyser);
+    mic = { stream, ctx, analyser, buf: new Uint8Array(analyser.fftSize), mime: pickMime() };
+    return mic;
+  })();
+  try { return await micOpening; }
+  finally { micOpening = null; }
+}
+
+/* Close the microphone. Call this when hands-free ends — not between turns.
+   While it is open the browser shows its recording indicator, which is the
+   honest signal that the kitchen is listening. */
+export function releaseMic() {
+  const m = mic;
+  mic = null;
+  if (!m) return;
+  try { m.stream.getTracks().forEach(t => t.stop()); } catch { /* ignore */ }
+  try { m.ctx.close(); } catch { /* ignore */ }
+}
+
+export function micIsOpen() { return micAlive(); }
+
 /* One-shot listen (tap-to-talk). */
 export function listen({ useServer, onText, onError, onEnd }) {
   const state = listenState(useServer);
@@ -151,7 +230,7 @@ function record({ onText, onError, onEnd }) {
   navigator.mediaDevices.getUserMedia({ audio: true }).then((s) => {
     if (stopped) { s.getTracks().forEach(t => t.stop()); onEnd?.(); return; }
     stream = s;
-    const type = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find(t => MediaRecorder.isTypeSupported?.(t));
+    const type = pickMime();
     recorder = new MediaRecorder(s, type ? { mimeType: type } : undefined);
     const chunks = [];
     recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
@@ -171,39 +250,38 @@ function record({ onText, onError, onEnd }) {
 }
 
 /* ---- Hands-free listen with voice-activity detection ----
-   Records, watches the mic level, and stops on its own after you go quiet.
-   Sends the clip to the server (Whisper). onText("") means it heard nothing.
+   Records on the microphone already open, watches the level, and stops on its
+   own after you go quiet. Sends the clip to the server (Whisper/Parakeet).
+   onText("") means it heard nothing.
    Options: silence (ms of quiet that ends a turn), maxWait (ms to wait for you
    to start), maxLen (ms hard cap). */
-export function listenVAD({ onText, onError, onStart, silence = 1000, maxWait = 9000, maxLen = 20000 }) {
-  if (listenState(true) !== "ok") { onError?.(LISTEN_REASON[listenState(true)] || "Can't listen."); return { stop() {} }; }
 
-  let stream = null, recorder = null, audioCtx = null, raf = 0;
+const METER_MS = 40;               // 25 reads a second is plenty to hear a pause
+
+export function listenVAD({ onText, onError, onStart, silence = 1000, maxWait = 9000, maxLen = 20000 }) {
+  const state = listenState(true);
+  if (state !== "ok") { onError?.(LISTEN_REASON[state] || "Can't listen."); return { stop() {} }; }
+
+  let recorder = null, meter = 0;
   let stopped = false, speaking = false, started = false;
   let lastVoice = 0, startedAt = 0;
   const chunks = [];
 
-  const cleanup = () => {
-    cancelAnimationFrame(raf);
-    try { audioCtx && audioCtx.close(); } catch { /* ignore */ }
-    stream?.getTracks().forEach(t => t.stop());
-  };
-
+  const stopMeter = () => { clearInterval(meter); meter = 0; };
   const endRecording = () => {
+    stopMeter();
     if (recorder && recorder.state === "recording") recorder.stop();
   };
 
-  navigator.mediaDevices.getUserMedia({
-    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-  }).then((s) => {
-    if (stopped) { s.getTracks().forEach(t => t.stop()); return; }
-    stream = s;
+  openMic().then((m) => {
+    if (stopped) return;
     onStart?.();
-    const type = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"].find(t => MediaRecorder.isTypeSupported?.(t));
-    recorder = new MediaRecorder(s, type ? { mimeType: type } : undefined);
+    recorder = new MediaRecorder(m.stream, m.mime ? { mimeType: m.mime } : undefined);
     recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
     recorder.onstop = async () => {
-      cleanup();
+      stopMeter();
+      // The stream and the AudioContext stay open on purpose — the next turn
+      // reuses them. releaseMic() is the session's job, not this turn's.
       if (stopped && !started) return;                     // cancelled before any speech
       if (!started) { onText?.(""); return; }              // never heard anything
       try {
@@ -214,16 +292,9 @@ export function listenVAD({ onText, onError, onStart, silence = 1000, maxWait = 
     recorder.start();
     startedAt = performance.now();
 
-    // level metering
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const src = audioCtx.createMediaStreamSource(s);
-    const analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 1024;
-    src.connect(analyser);
-    const buf = new Uint8Array(analyser.fftSize);
-
-    const tick = () => {
-      if (stopped) return;
+    const { analyser, buf } = m;
+    meter = setInterval(() => {
+      if (stopped) return stopMeter();
       analyser.getByteTimeDomainData(buf);
       let sum = 0;
       for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
@@ -239,10 +310,10 @@ export function listenVAD({ onText, onError, onStart, silence = 1000, maxWait = 
       }
       if (!started && now - startedAt > maxWait) return endRecording();   // gave up waiting
       if (now - startedAt > maxLen) return endRecording();                // hard cap
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-  }).catch(() => { onError?.("Microphone access was refused. Check the site's permissions."); });
+    }, METER_MS);
+  }).catch(() => {
+    onError?.("Microphone access was refused. Check the site's permissions.");
+  });
 
-  return { stop() { stopped = true; endRecording(); cleanup(); } };
+  return { stop() { stopped = true; endRecording(); } };
 }

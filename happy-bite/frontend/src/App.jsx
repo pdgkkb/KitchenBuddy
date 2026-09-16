@@ -3,11 +3,16 @@
 
    Two small additions: the screen is wrapped in a keyed element so a tab
    change animates on mount (no transition library — React already remounts it,
-   CSS does the rest), and the boot state says what it's doing instead of
-   showing a bare spinner. Both are governed by the bgAnim preference and by
-   the OS reduce-motion setting; see styles/waiting.css. */
+   CSS does the rest; see styles/motion.css), and while the kitchen is being
+   read the loading screen in index.html stays up. It is told to leave through
+   window.hbReady() once there is something real to show.
 
-import { useEffect } from "react";
+   Cooking mode, the chat, the sheets and the voice agent are split into their
+   own chunks: none of them is on screen when the app opens. They are fetched
+   when the browser is idle after the first render, so opening one is still
+   instant. */
+
+import { Suspense, lazy, useEffect } from "react";
 import { KitchenProvider, useKitchen } from "./state/kitchen.jsx";
 import { UIProvider, useUI } from "./state/ui.jsx";
 import { TabBar, TimerBar, Toast } from "./components/Chrome.jsx";
@@ -17,11 +22,22 @@ import Kitchen from "./screens/Kitchen.jsx";
 import Recipes from "./screens/Recipes.jsx";
 import Receipt from "./screens/Receipt.jsx";
 import Shopping from "./screens/Shopping.jsx";
-import CookMode, { CookDock } from "./screens/CookMode.jsx";
-import ChatScreen from "./screens/ChatScreen.jsx";
-import Sheets from "./sheets/index.jsx";
-import VoiceAgent from "./components/VoiceAgent.jsx";
 import "./styles/waiting.css";
+
+const loadCook = () => import("./screens/CookMode.jsx");
+const loadChat = () => import("./screens/ChatScreen.jsx");
+const loadSheets = () => import("./sheets/index.jsx");
+const loadAgent = () => import("./components/VoiceAgent.jsx");
+
+const CookMode = lazy(loadCook);
+const CookDock = lazy(() => loadCook().then(m => ({ default: m.CookDock })));
+const ChatScreen = lazy(loadChat);
+const Sheets = lazy(loadSheets);
+const VoiceAgent = lazy(loadAgent);
+
+const whenIdle = (fn) => (window.requestIdleCallback
+  ? requestIdleCallback(fn, { timeout: 2500 })
+  : setTimeout(fn, 1200));
 
 const SCREENS = { today: Today, kitchen: Kitchen, recipes: Recipes, receipt: Receipt, shopping: Shopping };
 
@@ -30,17 +46,17 @@ function Shell() {
   const ui = useUI();
   useEffect(() => { if (k.ready && isInMemory()) ui.say("Storage is off here — nothing will be saved"); }, [k.ready]); // eslint-disable-line
   useEffect(() => { document.body.classList.toggle("anim-off", k.prefs?.bgAnim === false); }, [k.prefs?.bgAnim]);
+  // Dismiss the loading screen (index.html) once the real interface exists.
+  useEffect(() => { if (k.ready) window.hbReady?.(); }, [k.ready]);
+  // Warm the lazy chunks once the kitchen is on screen.
+  useEffect(() => {
+    if (k.ready) whenIdle(() => { loadSheets(); loadAgent(); loadChat(); loadCook(); });
+  }, [k.ready]);
 
-  /* Reading the kitchen out of IndexedDB is usually instant, but on a cold
-     start with a full store it isn't — and a lone spinner gives no clue
-     whether the app is starting or stuck. */
-  if (!k.ready) return (
-    <div className="boot" aria-busy="true" role="status">
-      <span className="boot-mark" aria-hidden="true"><span /><span /><span /></span>
-      <p className="boot-name">Happy Bite</p>
-      <p className="boot-note">Opening your kitchen…</p>
-    </div>
-  );
+  /* Reading the kitchen out of IndexedDB is usually instant, but not always.
+     Until it's done the loading screen in index.html covers the page, so there
+     is nothing to render here. */
+  if (!k.ready) return null;
 
   const Screen = SCREENS[ui.tab] || Today;
   return (
@@ -52,11 +68,12 @@ function Shell() {
       </main>
       <TimerBar />
       <TabBar />
-      <Sheets />
-      {ui.cooking && !ui.cookMin && <CookMode key={ui.cooking.recipe.id} />}
-      {ui.cooking && ui.cookMin && <CookDock />}
-      {ui.chat && <ChatScreen />}
-      <VoiceAgent />
+      {/* One boundary each: a chunk still loading never hides the others. */}
+      <Suspense fallback={null}><Sheets /></Suspense>
+      {ui.cooking && !ui.cookMin && <Suspense fallback={null}><CookMode key={ui.cooking.recipe.id} /></Suspense>}
+      {ui.cooking && ui.cookMin && <Suspense fallback={null}><CookDock /></Suspense>}
+      {ui.chat && <Suspense fallback={null}><ChatScreen /></Suspense>}
+      <Suspense fallback={null}><VoiceAgent /></Suspense>
       <Toast />
     </>
   );

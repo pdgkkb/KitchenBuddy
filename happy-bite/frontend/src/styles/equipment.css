@@ -28,7 +28,6 @@
   background: var(--surface, #fff);
   color: var(--ink);
   cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .equip:hover { border-color: var(--mint, #2f9e74); }

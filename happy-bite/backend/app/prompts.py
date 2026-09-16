@@ -125,39 +125,195 @@ def _strip_tiny_times(recipe: dict) -> dict:
         return recipe
 
 
+# ---------------------------------------------------------------- cooking mode
+#
+# WHY THIS SECTION EXISTS
+#
+# The system prompt is rebuilt from scratch for every message. On the chat
+# screen that is fine — the model may be asked about anything. At the hob it is
+# the single largest cost in the whole loop: the full ingredient catalogue (every
+# id, name and unit in one line), sixty lines of stock, nine thousand characters
+# of recipe JSON and a corpus lookup, all of it read again before the model
+# writes the first character of "yes, turn it down a bit". On a local 9B that is
+# seconds per question, paid every question, for context that has not changed
+# since the last one.
+#
+# So cooking mode gets a smaller prompt: the ids that could actually come up,
+# thirty lines of stock, and the part of the method that is happening. Nothing
+# is hidden that the answer could need — the ingredients stay whole, because
+# substitution questions need them, and the current step is still quoted in
+# full below.
+
+
+def _cooking_ids(ctx: dict, ids: str) -> str:
+    """Only the ids this conversation could plausibly mention."""
+    recipe = ctx.get("recipe") or {}
+    wanted = {n.get("id") for n in (recipe.get("needs") or [])}
+    wanted |= {s.get("id") for s in (recipe.get("seasoning") or [])}
+    wanted |= {s.get("id") for s in (ctx.get("stock") or [])}
+    wanted.discard(None)
+    if not wanted:
+        return ids
+    keep = [part for part in (ids or "").split(", ")
+            if part.split(" =")[0].strip() in wanted]
+    return ", ".join(keep) or ids
+
+
+def _recipe_for_prompt(recipe: dict, step) -> dict:
+    """The dish, and the part of the method that is happening.
+
+    A cook on step four does not need step eleven's cue, and the model re-reads
+    all of it every time they open their mouth. The window keeps the step before
+    (they may ask "what did I just do?") and the one after (so "what's next?"
+    still has an answer), and says which numbers it is showing so the model
+    never miscounts.
+    """
+    r = _strip_tiny_times(recipe)
+    steps = r.get("steps") or []
+    if isinstance(step, int) and len(steps) > 3:
+        lo, hi = max(0, step - 1), min(len(steps), step + 2)
+        r = dict(r)
+        r["steps"] = steps[lo:hi]
+        r["stepsShown"] = f"{lo + 1}-{hi} of {len(steps)}"
+        r["stepsTotal"] = len(steps)
+    return r
+
+
+# ---------------------------------------------------------------- cooking mode, for real
+#
+# chef_system above is the whole chat brief: navigation, stock tools, link
+# import, kitchen readouts — 6,000 characters of rules plus tool schemas, read
+# again before every answer at the hob. A 2B model at 15 tokens a second spends
+# seconds on that before it says a word, and uses little of it.
+#
+# cook_system is what a question in cooking mode actually needs, laid out for
+# the model server's prompt cache: everything that stays the same for the whole
+# session comes FIRST (rules, the dish, the kitchen), and the one thing that
+# changes — which step they are on — comes LAST. The server re-reads only what
+# differs from the previous request, so after the first question the cost of a
+# new one is the step line, the history and the question itself.
+
+COOK = """You are a chef standing beside someone who is cooking. Your words are read
+aloud while their hands are busy.
+
+- Answer in one or two short spoken sentences. Lead with the answer. No lists,
+  no markdown, no field labels, no restating the whole step.
+- A question is about the CURRENT STEP (at the end) unless they name another one.
+  Never ask what they mean when the current step already answers it.
+- Take amounts, heat, cues and times from this dish. Don't invent steps.
+- Judge doneness by sight, sound, smell and feel. Give minutes only when the step
+  has them.
+- They are allowed to change the dish. Most swaps and omissions are fine: say
+  yes when it works and what will taste or cook differently ("Yes — butter
+  browns faster, so keep the heat a notch lower."). Say no only when it would
+  ruin the dish or be unsafe. Prefer what is in their kitchen, and never suggest
+  equipment they don't have.
+- Food safety is never softened.
+- If what they said makes no sense for this dish, it was probably misheard: ask
+  them to say it again.
+- Reply in the language they speak."""
+
+
+def cook_system(ctx: dict, known: dict | None = None) -> str:
+    recipe = ctx.get("recipe") or {}
+    steps = recipe.get("steps") or []
+    serves = ctx.get("serves") or recipe.get("serves")
+    known = known or {}
+    names = {s.get("id"): s.get("name") for s in (ctx.get("stock") or []) if s.get("id")}
+
+    def label(iid):
+        return (known.get(iid) or {}).get("name") or names.get(iid) or str(iid or "").replace("_", " ")
+
+    def amount(n):
+        qty, unit = n.get("qty"), (known.get(n.get("id")) or {}).get("unit", "")
+        unit = "" if unit == "u" else unit              # "6 eggs", not "6 u"
+        if not qty:
+            return ""
+        return f"{qty:g} {unit}".strip() if isinstance(qty, (int, float)) else str(qty)
+
+    lines = [COOK, "", f"THE DISH: {recipe.get('name', 'this dish')}"
+             + (f" ({recipe.get('cuisine')})" if recipe.get("cuisine") else "")
+             + (f", for {serves}" if serves else "")]
+    needs = [f"{label(n.get('id'))} {amount(n)}".strip() + (f" ({n['prep']})" if n.get("prep") else "")
+             for n in (recipe.get("needs") or []) if isinstance(n, dict)]
+    needs += [str(x) for x in (recipe.get("extras") or [])]
+    seasoning = [label(n.get("id")) for n in (recipe.get("seasoning") or []) if isinstance(n, dict)]
+    if needs:
+        written = recipe.get("serves")
+        lines.append(f"Ingredients (as written{f' for {written}' if written else ''}; scale to the table): "
+                     + "; ".join(needs))
+    if seasoning:
+        lines.append("Seasoning: " + ", ".join(seasoning))
+    for n, st in enumerate(_strip_tiny_times(recipe).get("steps") or [], 1):
+        extra = [f"heat {st['heat']}" if st.get("heat") else "",
+                 f"watch for {st['cue']}" if st.get("cue") else "",
+                 f"about {st['minutes']} min" if st.get("minutes") else ""]
+        extra = "; ".join(x for x in extra if x)
+        lines.append(f"{n}. {st.get('do', '')}" + (f" [{extra}]" if extra else ""))
+
+    kitchen = [s.get("name") for s in (ctx.get("stock") or [])[:25] if s.get("name")]
+    if kitchen:
+        lines += ["", "In their kitchen: " + ", ".join(kitchen)]
+    equipment = ctx.get("equipment")
+    if equipment:
+        from .adapt import EQUIPMENT as KIT
+        lines.append("Their equipment (nothing else): " + ", ".join(KIT.get(e, e) for e in equipment))
+
+    step = ctx.get("step")
+    if isinstance(step, int) and 0 <= step < len(steps):
+        st = steps[step]
+        lines += ["", f"CURRENT STEP: {step + 1} of {len(steps)} — {st.get('do', '')}"
+                  + (f" Heat: {st['heat']}." if st.get("heat") else "")
+                  + (f" Watch for: {st['cue']}." if st.get("cue") else "")]
+    return "\n".join(lines)
+
+
 def chef_system(ctx: dict, attachment: dict | None, ids: str = "", customs: dict | None = None,
                 retrieved: list[dict] | None = None) -> str:
-    parts = [CHEF, _ids_block(ids, customs)]
+    cooking = ctx.get("mode") == "cooking"
+    parts = [CHEF, _ids_block(_cooking_ids(ctx, ids) if cooking else ids, customs)]
+
     stock = ctx.get("stock") or []
     if stock:
+        limit = 30 if cooking else 60
         lines = [f"- {s.get('name')} (id {s.get('id')}): {s.get('qty')} {s.get('unit')}"
                  + (f" (use within {s['daysLeft']} days)" if isinstance(s.get("daysLeft"), int) and s["daysLeft"] <= 3 else "")
-                 for s in stock[:60]]
+                 for s in stock[:limit]]
         parts.append("In their kitchen right now:\n" + "\n".join(lines))
+
     recipe = ctx.get("recipe")
+    step = ctx.get("step")
     if recipe:
-        clean = _strip_tiny_times(recipe)
-        parts.append("The recipe they are cooking (JSON):\n" + json.dumps(clean, ensure_ascii=False)[:9000])
-        step = ctx.get("step")
+        clean = _recipe_for_prompt(recipe, step) if cooking else _strip_tiny_times(recipe)
+        parts.append("The recipe they are cooking (JSON):\n"
+                     + json.dumps(clean, ensure_ascii=False)[:9000])
         steps = recipe.get("steps") or []
         if isinstance(step, int) and 0 <= step < len(steps):
             parts.append(f"They are on step {step + 1} of {len(steps)}: \"{steps[step].get('do')}\". "
                          "Questions like 'is this right?' or 'how long?' are about this step.")
+
     equipment = ctx.get("equipment")
     if equipment:
         from .adapt import EQUIPMENT as KIT
         parts.append("Their kitchen equipment — this list is complete, they have "
                      "NOTHING else:\n"
                      + "\n".join(f"- {KIT.get(e, e)}" for e in equipment))
+
     if ctx.get("serves"):
         parts.append(f"Cooking for {ctx['serves']}.")
+
     if attachment:
         parts.append("They shared a link. What the page contains:\n"
                      + json.dumps(attachment, ensure_ascii=False)[:9000])
-    if retrieved:
+
+    # Never in cooking mode. api.chat doesn't even run the retrieval there — this
+    # guard is belt and braces, so a future caller can't put four other people's
+    # recipes in front of someone standing over a hot pan.
+    if retrieved and not cooking:
         parts.append("Relevant reference recipes from a large cooking corpus. Use them as "
                      "inspiration and explain similarities or substitutions; do not claim "
                      "they are the user's recipe:\n" + _retrieved_text(retrieved))
+
     return "\n\n".join(parts)
 
 
@@ -168,6 +324,10 @@ def chef_system(ctx: dict, attachment: dict | None, ids: str = "", customs: dict
 # single time. On a 9B running on a laptop that is minutes, and it bought
 # almost nothing: the corpus is there for inspiration, and a title with its
 # ingredient list inspires about as well as the full method does.
+#
+# When a corpus recipe is actually good enough to COOK, it no longer comes
+# through here at all — see app/template.py, which hands the whole thing over
+# to be converted rather than paraphrased.
 RAG_CHARS = 900
 RAG_EACH = 320
 
@@ -175,7 +335,8 @@ RAG_EACH = 320
 def _retrieved_text(recipes: list[dict]) -> str:
     out = []
     for r in recipes[:2]:
-        line = f"- {r.get('title')}: {r.get('ingredients')}"
+        ingredients = str(r.get("ingredients") or "").replace("\n", ", ")
+        line = f"- {r.get('title')}: {ingredients}"
         out.append(line[:RAG_EACH])
     return "\n".join(out)[:RAG_CHARS]
 
@@ -201,11 +362,11 @@ then make a fresh recipe.
 
 {RULES}"""
     if retrieved:
-      return system + ("\n\nReference recipes retrieved for this request. Use them only to "
-               "understand broad ingredient pairings and techniques. Create a "
-               "new recipe with a different name, ingredient combination or "
-               "method; never reproduce a reference recipe or its wording. "
-               "Follow the valid ingredient-id rules above:\n" + _retrieved_text(retrieved))
+        return system + ("\n\nReference recipes retrieved for this request. Use them only to "
+                         "understand broad ingredient pairings and techniques. Create a "
+                         "new recipe with a different name, ingredient combination or "
+                         "method; never reproduce a reference recipe or its wording. "
+                         "Follow the valid ingredient-id rules above:\n" + _retrieved_text(retrieved))
     return system
 
 

@@ -36,14 +36,26 @@ const DIETARY = [
 const findCuisine = (text) =>
   CUISINES.find(c => new RegExp("\\b" + c + "\\b", "i").test(text)) || null;
 
-function findIngredient(text) {
-  const t = text.toLowerCase();
-  let best = null;
-  for (const [id, r] of Object.entries(INGREDIENTS)) {
+let stems = { size: -1, list: [] };
+function stemList() {
+  const entries = Object.entries(INGREDIENTS);    // rebuilt only when products were added
+  if (entries.length === stems.size) return stems.list;
+  const list = [];
+  for (const [id, r] of entries) {
     const word = r.name.toLowerCase().replace(/[^a-z ]/g, "").split(" ")[0];
     if (word.length < 4) continue;
     const stem = word.replace(/e?s$/, "");
-    if (new RegExp("\\b" + stem).test(t) && (!best || stem.length > best.stem.length)) best = { id, stem };
+    list.push({ id, stem, rx: new RegExp("\\b" + stem) });
+  }
+  stems = { size: entries.length, list };
+  return list;
+}
+
+function findIngredient(text) {
+  const t = text.toLowerCase();
+  let best = null;
+  for (const s of stemList()) {
+    if ((!best || s.stem.length > best.stem.length) && s.rx.test(t)) best = s;
   }
   return best ? best.id : null;
 }

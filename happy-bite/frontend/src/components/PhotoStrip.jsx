@@ -103,7 +103,7 @@ export default function PhotoStrip({ recipe, auto = true, onPrimary }) {
                   className={"photo-thumb" + (recipe.photo === u ? " is-on" : "")}
                   onClick={() => { setPhoto(id, u); ui.say("Picture changed"); }}
                   aria-label="Use this picture">
-            <img src={u} alt="" loading="lazy" />
+            <img src={u} alt="" loading="lazy" decoding="async" width="84" height="84" />
           </button>
         ))}
         {pending && (

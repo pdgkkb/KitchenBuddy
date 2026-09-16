@@ -9,20 +9,22 @@
    or cooking mode is open (those screens have their own voice), avoiding two
    recognisers fighting over the mic.
 
-   TWO THINGS CHANGED HERE, both of which made it silent:
+   THE WAKE WORD, AFTER FOUR ATTEMPTS AT IT:
 
-   1. It never spoke the chef's replies. `useChat` only speaks when
-      `prefs.speakReplies` is on, and that pref is false by default and is only
-      ever set by ChatScreen and CookMode. This file's old comment claimed
-      "streams reply, then Kokoro speaks it" — it didn't. It now speaks the
-      reply itself when the pref is off, and stays out of the way when it's on,
-      so the reply is never read out twice.
+   1. It used to refuse to arm without the local voice server. Nothing in
+      wake.js talks to a server — it is the browser's own recogniser from start
+      to finish — so that test demanded Whisper in order to use the one part of
+      the stack that cannot use Whisper.
+   2. Then it was a switch buried in a settings sheet, off by default, which is
+      indistinguishable from broken if you never find the switch. It is now a
+      LONG PRESS on the mic button, right where your thumb already is, and the
+      settings toggle stays for people who prefer it.
+   3. And it was silent about every way it can fail. Now its state is on the
+      screen, under the button: armed, or the sentence saying why not.
 
-   2. It refused to start at all without the local models. The browser has its
-      own recogniser and its own voice; they are worse, and Chrome's recogniser
-      sends audio to Google, so local is still the right default — but "worse"
-      beats "nothing". Without Whisper and Kokoro it now falls back and says so
-      once, rather than showing a toast and doing nothing. */
+   Off by default is deliberate and stays: arming it holds the microphone open,
+   and in Chrome the browser streams what it hears to Google to recognise it.
+   That is a decision for the person in the kitchen. */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as voice from "../lib/voice.js";
@@ -33,11 +35,11 @@ import { useUI } from "../state/ui.jsx";
 import { useApplyAction } from "../state/actions.jsx";
 import { useChat } from "./Chat.jsx";
 import { Icon } from "./Icon.jsx";
+import "../styles/agent.css";
 
 /* One turn on the browser's own recogniser — the fallback when the server has
    no Whisper. It ends itself when you stop talking, which is what makes a loop
-   possible without voice-activity detection of our own. Kept here rather than
-   in lib/voice.js so this is a single drop-in file. */
+   possible without voice-activity detection of our own. */
 function browserTurn({ onText, onError, onStart }) {
   const Rec = typeof window !== "undefined" &&
               (window.SpeechRecognition || window.webkitSpeechRecognition);
@@ -56,8 +58,6 @@ function browserTurn({ onText, onError, onStart }) {
   rec.onstart = () => onStart?.();
   rec.onresult = (e) => finish(e.results[0][0].transcript || "");
   rec.onerror = (e) => {
-    // Silence and a cancelled turn are not errors — they're an empty turn, and
-    // the loop should just listen again.
     if (e.error === "no-speech" || e.error === "aborted") return finish("");
     done = true;
     onError?.(e.error === "not-allowed"
@@ -76,7 +76,7 @@ const browserCanListen = () =>
   window.isSecureContext;
 
 export default function VoiceAgent() {
-  const { k } = useKitchen();
+  const { k, setPref } = useKitchen();
   const ui = useUI();
   const applyAction = useApplyAction();
   const serves = (k.diners && k.diners.length) || 2;
@@ -95,19 +95,26 @@ export default function VoiceAgent() {
 
   const [active, setActive] = useState(false);
   const [vstate, setVstate] = useState("");            // listening | thinking | speaking
-  const [lastSaid, setLastSaid] = useState("");        // shown in the card for instant replies
+  const [lastSaid, setLastSaid] = useState("");
+  const [wakeState, setWakeState] = useState("off");   // off | starting | armed | error
+  const [wakeWhy, setWakeWhy] = useState("");
   const activeRef = useRef(false);
   const listenRef = useRef(null);
   const wakeRef = useRef(null);
-  const warnedRef = useRef(false);                     // the "browser voice" note, said once
+  const warnedRef = useRef(false);
+  const pressRef = useRef(null);                       // long-press timer
+  const heldRef = useRef(false);
 
-  // Local models when we have them, the browser when we don't.
+  const handsFree = !!k.prefs?.handsFree;
   const canListen = ui.server.voice || browserCanListen();
 
-  // Full-screen chat and full-screen cooking own the mic themselves. But when
-  // cooking is MINIMISED the agent stays live, so "go back to the cooking
-  // recipe" still works.
-  const hidden = !!(ui.chat || (ui.cooking && !ui.cookMin));
+  /* Writing a recipe is not a conversation. While the create or link panel is
+     up the person is watching a list of stages, and the recogniser is not free:
+     it holds the microphone, runs an AudioContext and a per-frame level meter,
+     and on the server path posts audio to Whisper every few seconds — all of it
+     competing with the model on a machine already at its limit. */
+  const working = ui.sheet?.type === "create" || ui.sheet?.type === "link";
+  const hidden = !!(ui.chat || working || (ui.cooking && !ui.cookMin));
   const canListenRef = useRef(canListen); canListenRef.current = canListen;
 
   const stopWake = () => { try { wakeRef.current?.stop(); } catch { /* */ } wakeRef.current = null; };
@@ -127,13 +134,8 @@ export default function VoiceAgent() {
       listenRef.current = null;
       if (!activeRef.current) return;
       const said = (t || "").trim();
-      // An empty browser turn comes back instantly; pausing keeps it from
-      // spinning the recogniser in a tight loop.
       if (!said) return again(onServer ? 0 : 500);
 
-      // Instant, no-model path for the things people say most: navigation and
-      // reading the kitchen out loud. Answers immediately and reliably; only
-      // real questions fall through to the chef model below.
       const openId = uiRef.current.sheet?.type === "recipe" ? uiRef.current.sheet.props.id : null;
       const cmd = parseCommand(said, {
         stock: stockRef.current,
@@ -152,21 +154,14 @@ export default function VoiceAgent() {
       }
 
       setVstate("thinking");
-      setLastSaid("");                                  // fall back to the chef's own reply
+      setLastSaid("");
       if (!uiRef.current.server.chat) {
         uiRef.current.say("The chef server is offline. Start it, then try again.");
         return again(500);
       }
       const reply = await sendRef.current(said);
-
-      /* Say it. `useChat` only does this when prefs.speakReplies is on, which it
-         isn't unless another screen turned it on — so without this the agent
-         listened, thought, answered on screen, and said nothing at all. When
-         the pref IS on, useChat has already spoken and we keep quiet. */
       if (reply && !speaksAlreadyRef.current) {
         setVstate("speaking");
-        // Browser speech starts much sooner than waiting for a complete local
-        // Kokoro render. Server voice remains available in full chat/cook mode.
         try { await voice.speak(reply, false); } catch { /* */ }
       }
       again(0);
@@ -190,9 +185,7 @@ export default function VoiceAgent() {
         : "This browser can't listen, and the local voice is off. Chrome, Edge and Safari can listen.");
       return;
     }
-    /* No local models: still works, just not as well. Said once per session so
-       it's information rather than nagging. */
-    if (!ui.server.voice && !warnedRef.current) {
+    if (!uiRef.current.server.voice && !warnedRef.current) {
       warnedRef.current = true;
       uiRef.current.say("Using the browser's voice — install Whisper and Kokoro for the good one.");
     }
@@ -213,54 +206,75 @@ export default function VoiceAgent() {
 
   const startRef = useRef(start); startRef.current = start;
 
-  /* Best-effort wake word while idle. The browser recogniser can be flaky, so
-     the tap button is always the reliable way in. Not armed when the agent is
-     already listening through that same recogniser — one at a time. */
+  /* The wake word, armed by a setting and by nothing else — no server, no
+     models. Not armed while the agent is already listening through that same
+     recogniser: one at a time. */
   useEffect(() => {
-    /* The wake word never armed once, and the reason was the condition that
-       used to sit on the line below: `!ui.server.voice`. Nothing in wake.js
-       talks to the server — it is the browser's own continuous recogniser from
-       start to finish — so that test demanded Whisper be running in order to
-       use the one part of the voice stack that cannot use Whisper. It is the
-       same mistake this file's own header describes fixing for the mic button
-       in point 2, left in place four lines further down. The button worked.
-       The phrase never had a chance.
-
-       Now it is a setting, and deliberately off until asked for: arming this
-       holds the microphone open, and in Chrome the browser streams what it
-       hears to Google to recognise it. That is a choice to hand to the person
-       standing in the kitchen, not one to make quietly on their behalf —
-       wake.js says as much in its own header. Settings → Assistant and voice
-       → Hands-free. */
-    if (hidden || active || !k.prefs?.handsFree) { stopWake(); return; }
+    if (hidden || active || !handsFree) {
+      stopWake();
+      setWakeState("off");
+      setWakeWhy("");
+      return;
+    }
+    setWakeState("starting");
+    setWakeWhy("");
     wakeRef.current = wake.startWakeWord({
       phrase: ui.server.wakeWord || "hey chef",
       onWake: () => startRef.current(),
-      /* Not silent any more either. startWakeWord reports a refused microphone
-         and an unsupported browser through this, and swallowing both made a
-         recogniser that never started look exactly like a phrase that never
-         triggers — with nothing on screen to tell them apart. */
+      onStatus: (state, detail) => { setWakeState(state); if (detail) setWakeWhy(detail); },
+      onHeard: (text, matched) => { if (!matched) setLastSaid(""); void text; },
       onError: (msg) => { if (msg) uiRef.current.say(msg); },
     });
     return () => stopWake();
-  }, [hidden, active, k.prefs?.handsFree, ui.server.wakeWord]);
+  }, [hidden, active, handsFree, ui.server.wakeWord]);
 
-  /* If the chat/cook screen opens or the app leaves, drop any live turn. */
   useEffect(() => { if (hidden && activeRef.current) stop(); }, [hidden, stop]);
   useEffect(() => () => stop(), [stop]);
 
   if (hidden) return null;
 
-  const lastChef = [...chat.messages].reverse().find(m => m.role === "assistant" && m.content);
   const label = { listening: "Listening…", thinking: "Thinking…", speaking: "Speaking…" }[vstate];
+
+  /* Long press = hands-free on or off. The switch used to live only in a
+     settings sheet, which for a feature people describe as "not working" is
+     the same as not existing. */
+  const hold = () => {
+    heldRef.current = false;
+    pressRef.current = setTimeout(() => {
+      heldRef.current = true;
+      const next = !handsFree;
+      setPref("handsFree", next);
+      uiRef.current.say(next
+        ? `Hands-free on — say "${ui.server.wakeWord || "hey chef"}". Chrome sends what it hears to Google while this is on.`
+        : "Hands-free off.");
+    }, 550);
+  };
+  const release = () => { clearTimeout(pressRef.current); };
+  const tap = () => {
+    if (heldRef.current) { heldRef.current = false; return; }   // that was the long press
+    active ? stop() : start();
+  };
+
+  const hint = active ? label
+    : !handsFree ? null
+    : wakeState === "armed" || wakeState === "starting" ? `Say “${ui.server.wakeWord || "hey chef"}”`
+    : wakeState === "error" ? wakeWhy
+    : null;
 
   return (
     <div className="agent">
-      <button className={"agent-fab " + (active ? "is-live is-" + (vstate || "idle") : "")}
-              onClick={() => (active ? stop() : start())}
+      {hint && (
+        <p className={"agent-hint" + (wakeState === "error" && !active ? " is-bad" : "")}
+           role="status">{hint}</p>
+      )}
+      <button className={"agent-fab " + (active ? "is-live is-" + (vstate || "idle") : "")
+                         + (!active && handsFree && wakeState === "armed" ? " is-armed" : "")}
+              onClick={tap}
+              onPointerDown={hold} onPointerUp={release} onPointerLeave={release}
+              onContextMenu={(e) => e.preventDefault()}
               aria-pressed={active}
-              aria-label={active ? "Stop talking to the chef" : "Talk to the chef"}
-              title={label || (ui.server.wakeWord ? `Tap, or say "${ui.server.wakeWord}"` : "Talk to the chef")}>
+              aria-label={active ? "Stop talking to the chef" : "Talk to the chef. Press and hold to switch hands-free on or off."}
+              title={active ? "Stop" : "Tap to talk. Hold to turn the wake word on or off."}>
         <Icon name={active ? "stop" : "mic"} size={26} />
       </button>
     </div>

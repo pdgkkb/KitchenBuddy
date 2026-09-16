@@ -205,21 +205,99 @@ const CMD = {
   minimize: ["minimize", "minimise", "hide this", "step out", "put it away", "make it smaller", "go smaller"],
 };
 
-/* True when the utterance IS the phrase, allowing a leading/trailing filler
-   ("ok next", "next please", "the next step"). */
+/* Words that carry no instruction, at either end of what you said.
+   ------------------------------------------------------------------------
+   The old version compared the whole utterance against the phrase, allowing
+   exactly ONE filler from a list of five. "next step" worked. "go to the next
+   step" — which is what people actually say — did not, so it fell through to
+   the chef as a question, and the answer arrived half a minute later while the
+   step sat where it was.
+
+   These are stripped repeatedly from both ends until nothing is left to strip,
+   and only THEN is the remainder compared to the phrase. That keeps the rule
+   the strict one it was meant to be: the whole utterance must BE the command.
+   "what do I do after adding the tomatoes" strips nothing and still goes to
+   the chef, which is right — it is a question. */
+// NOTE the apostrophe-free spellings. norm() above turns every non-letter into
+// a space, so "let's" reaches here as "let s" and "i'd" as "i d". Listing only
+// the written forms is how "let's go to the next step" stayed a question.
+const LEAD = ["ok", "okay", "okey", "alright", "all right", "right", "so", "and", "then",
+              "um", "uh", "er", "well", "hey", "hey chef", "chef", "please", "the", "a",
+              "can you", "could you", "would you", "i want to", "i would like to",
+              "i d like to", "id like to", "lets", "let s", "let us",
+              "go to", "go", "move to", "take me to", "take me", "jump to", "switch to",
+              "now", "just", "yeah", "yes", "we", "you"];
+const TAIL = ["please", "now", "chef", "thanks", "thank you", "for me", "then", "ok", "okay",
+              "already", "step", "one"];
+
+function strip(t, words) {
+  const lead = words === LEAD;
+  let out = t;
+  for (let pass = 0; pass < 4; pass++) {
+    let cut = false;
+    for (const w of words) {
+      const edge = lead ? w + " " : " " + w;
+      if (lead ? out.startsWith(edge) : out.endsWith(edge)) {
+        out = (lead ? out.slice(edge.length) : out.slice(0, -edge.length)).trim();
+        cut = true;
+        break;
+      }
+    }
+    if (!cut) break;
+  }
+  return out;
+}
+
 function isCmd(t, phrases) {
+  // Whole-utterance match first, so a phrase that IS a filler word — "next",
+  // "ok", "done" — is never stripped into nothing before it can match.
+  for (const p of phrases) if (t === p) return true;
+  const core = strip(strip(t, LEAD), TAIL);
+  if (!core) return false;
   for (const p of phrases) {
-    if (t === p) return true;
-    if (t === "ok " + p || t === "okay " + p || t === "please " + p || t === "the " + p) return true;
-    if (t === p + " please" || t === p + " now" || t === p + " chef") return true;
+    if (core === p) return true;
+    if (core === strip(strip(p, LEAD), TAIL)) return true;
   }
   return false;
+}
+
+/* "set a timer for 6 minutes", "timer for ten minutes", "time this for half an hour".
+   A small local model narrates these ("I'll set a timer") without ever calling
+   the tool, so the one thing someone at the hob asks for most has to work here,
+   instantly, without the model. Returns minutes, or null. */
+const NUMBER_WORDS = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
+  nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
+  seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50,
+  sixty: 60, ninety: 90, couple: 2, few: 3 };
+export function timerMinutes(text) {
+  // Not norm(): it turns "1.5" into "1 5". Lower-case and keep decimals.
+  const t = String(text || "").toLowerCase().replace(/(\d),(\d)/g, "$1.$2").replace(/[^a-z0-9.\s]/g, " ").replace(/\s+/g, " ").trim();
+  if (!/\b(timer|time (it|this|that)|countdown)\b/.test(t)) return null;
+  if (/\b(an|one) hour and a half\b/.test(t)) return 90;
+  if (/\bhalf (an )?hour\b/.test(t)) return 30;
+  if (/\bquarter (of )?(an )?hour\b/.test(t)) return 15;
+  const m = t.match(/\b(\d+(?:\.\d+)?|[a-z]+(?: [a-z]+)?)(?: of)? (?:and a half )?(minutes?|mins?|hours?|hrs?|seconds?|secs?)\b/);
+  if (!m) return null;
+  const words = m[1].split(" ");
+  let n;
+  if (/\d/.test(m[1])) n = parseFloat(m[1]);
+  else if (words.length === 2 && NUMBER_WORDS[words[0]] >= 20 && NUMBER_WORDS[words[1]] < 10) n = NUMBER_WORDS[words[0]] + NUMBER_WORDS[words[1]];
+  else n = NUMBER_WORDS[words[words.length - 1]];
+  if (!n) return null;
+  if (/and a half/.test(t)) n += 0.5;
+  const minutes = /^h/.test(m[2]) ? n * 60 : /^s/.test(m[2]) ? n / 60 : n;
+  return minutes > 0 && minutes <= 600 ? Math.round(minutes * 60) / 60 : null;
 }
 
 export function parseCook(text) {
   const t = norm(text);
   if (!t) return null;
-  if (t.split(" ").length > 6) return null;       // too long to be a command — it's a question
+  const minutes = timerMinutes(text);
+  if (minutes && !/\b(stop|cancel|clear|kill)\b/.test(t)) return { cmd: "timer", minutes };
+  // Eight rather than six: "can you go back to the previous step please" is
+  // nine words of which three are instruction. The filler-stripping below is
+  // what actually decides; this is only a cheap early exit.
+  if (t.split(" ").length > 8) return null;       // too long to be a command — it's a question
 
   // Order matters: "stop cooking"/"stop timer" must beat a bare "stop".
   if (isCmd(t, CMD.stopCooking)) return { cmd: "stopCooking" };

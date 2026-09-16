@@ -33,6 +33,17 @@ export function useChat(context, greeting, onAction) {
 
   const patchLast = (fn) => setMessages(ms => ms.map((m, i) => i === ms.length - 1 ? { ...m, ...fn(m) } : m));
 
+  /* Tokens arrive a dozen or more a second. Rendering each one re-rendered the
+     whole screen that owns this hook — all of cooking mode, mid-recipe — for a
+     change nobody can read that fast. Text is collected and drawn once a frame. */
+  const pending = useRef("");
+  const frame = useRef(0);
+  const flush = () => {
+    frame.current = 0;
+    const text = pending.current;
+    patchLast(() => ({ content: text, status: null }));
+  };
+
   const send = useCallback(async (text) => {
     const clean = String(text || "").trim();
     if (!clean || busy) return "";
@@ -54,7 +65,10 @@ export function useChat(context, greeting, onAction) {
         context: context(),
         custom: k.customs
       }, (ev) => {
-        if (ev.type === "delta") { reply += ev.text; sq.feed(ev.text); patchLast(() => ({ content: reply, status: null })); }
+        if (ev.type === "delta") {
+          reply += ev.text; sq.feed(ev.text); pending.current = reply;
+          if (!frame.current) frame.current = requestAnimationFrame(flush);
+        }
         else if (ev.type === "action") {
           const receipt = act.current ? act.current(ev.action) : null;
           if (receipt) patchLast(m => ({ actions: [...(m.actions || []), receipt] }));
@@ -66,6 +80,7 @@ export function useChat(context, greeting, onAction) {
     } catch (e) {
       if (e.name !== "AbortError") patchLast(() => ({ error: e.message }));
     } finally {
+      if (frame.current) { cancelAnimationFrame(frame.current); flush(); }
       patchLast(() => ({ pending: false }));
       setBusy(false);
     }
@@ -126,7 +141,7 @@ function LinkCard({ recipe, method, onSave, onCook }) {
   const tracked = recipe.needs.length;
   return (
     <div className="linkcard">
-      {recipe.remotePhoto && <img className="linkcard-img" src={recipe.remotePhoto} alt="" />}
+      {recipe.remotePhoto && <img className="linkcard-img" src={recipe.remotePhoto} alt="" loading="lazy" decoding="async" />}
       <div className="linkcard-body">
         <p className="linkcard-site">From {recipe.source?.site}</p>
         <p className="linkcard-name">{recipe.name}</p>

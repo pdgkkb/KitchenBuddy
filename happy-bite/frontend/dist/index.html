@@ -3,13 +3,120 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#F3F7F6">
-  <link rel="manifest" href="/manifest.webmanifest">
   <title>Happy Bite</title>
-  <script type="module" crossorigin src="/assets/index-ujQBjPXj.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-DBIzyAHl.css">
+  <meta name="description" content="What's for dinner, from what's already in the kitchen.">
+  <meta name="theme-color" content="#F6F5F0">
+  <link rel="preload" href="/assets/figtree-latin-wght-normal-D_ZTVpCC.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/assets/catalog-corpus-DHkYgvMN.json" as="fetch" crossorigin>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/manifest.webmanifest">
+
+  <!-- ================================================================
+       LOADING SCREEN — critical CSS.
+       Inline on purpose: it has to paint before any stylesheet, font or
+       script arrives. Colours are literal copies of tokens.css (the tokens
+       aren't loaded yet). Everything that moves is transform/opacity.
+       ================================================================ -->
+  <style>
+    html,body{margin:0;background:#F6F5F0;color:#1B2620;font:450 20px/1.45 "Figtree Variable",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+
+    .hb-loader{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;overflow:hidden;background:#F6F5F0;
+      transition:opacity .42s cubic-bezier(.16,1,.3,1),transform .42s cubic-bezier(.16,1,.3,1)}
+    /* soft brand light behind the mark; painted once, never animated */
+    .hb-loader::before{content:"";position:absolute;inset:-20%;pointer-events:none;
+      background:radial-gradient(34% 30% at 30% 35%,rgba(43,192,142,.22),transparent 70%),
+                 radial-gradient(30% 28% at 70% 65%,rgba(34,179,214,.16),transparent 70%),
+                 radial-gradient(26% 24% at 62% 28%,rgba(245,165,36,.14),transparent 70%)}
+    .hb-loader.is-leaving{opacity:0;transform:scale(1.015);pointer-events:none}
+
+    .hb-loader-card{position:relative;display:grid;justify-items:center;gap:18px;padding:32px 36px;text-align:center}
+    .hb-mark{position:relative;width:76px;height:76px}
+    .hb-mark svg{position:absolute;inset:0;width:100%;height:100%}
+    .hb-mark-track{fill:none;stroke:#E9E6DB;stroke-width:7}
+    .hb-mark-arc{fill:none;stroke:url(#hb-grad);stroke-width:7;stroke-linecap:round}
+    .hb-mark-spin{transform-origin:50% 50%;animation:hb-spin 1.1s cubic-bezier(.65,0,.35,1) infinite}
+    .hb-mark-core{position:absolute;inset:22px;border-radius:50%;background:#14201A;animation:hb-breathe 1.8s ease-in-out infinite}
+
+    .hb-name{margin:0;font-weight:820;font-size:26px;letter-spacing:-.02em;color:#101A15}
+    .hb-note{margin:-10px 0 0;font-size:16px;font-weight:550;color:#505B52}
+
+    .hb-bar{position:relative;width:168px;height:4px;border-radius:999px;background:#E9E6DB;overflow:hidden}
+    .hb-bar::after{content:"";position:absolute;inset:0;width:45%;border-radius:inherit;
+      background:linear-gradient(90deg,transparent,#2BC08E 35%,#22B3D6 70%,transparent);
+      animation:hb-shimmer 1.3s cubic-bezier(.65,0,.35,1) infinite}
+
+    @keyframes hb-spin{to{transform:rotate(360deg)}}
+    @keyframes hb-breathe{50%{transform:scale(.86);opacity:.85}}
+    @keyframes hb-shimmer{from{transform:translateX(-110%)}to{transform:translateX(230%)}}
+
+    /* Reduced motion: no spinning, no travel — a slow fade is enough to show life. */
+    @media (prefers-reduced-motion:reduce){
+      .hb-loader{transition:none}
+      .hb-mark-spin,.hb-mark-core{animation:none}
+      .hb-bar::after{width:100%;animation:hb-pulse 2.4s ease-in-out infinite}
+      @keyframes hb-pulse{50%{opacity:.35}}
+    }
+  </style>
+  <script type="module" crossorigin src="/assets/index-BpwB1c30.js"></script>
+  <link rel="preload" as="style" crossorigin href="/assets/index-DABoak1s.css" data-app-css onload="this.onload=null;this.rel='stylesheet'">
 </head>
 <body>
+  <!-- ================================================================
+       LOADING SCREEN — markup. A sibling of #root, so React never touches
+       it; the script below removes it once the page and the app are ready.
+       ================================================================ -->
+  <div class="hb-loader" id="hb-loader" role="status" aria-live="polite">
+    <div class="hb-loader-card">
+      <div class="hb-mark" aria-hidden="true">
+        <svg viewBox="0 0 76 76">
+          <defs>
+            <linearGradient id="hb-grad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#3AD6A2"/><stop offset="1" stop-color="#22B3D6"/>
+            </linearGradient>
+          </defs>
+          <circle class="hb-mark-track" cx="38" cy="38" r="31"/>
+          <g class="hb-mark-spin"><circle class="hb-mark-arc" cx="38" cy="38" r="31" stroke-dasharray="58 137"/></g>
+        </svg>
+        <span class="hb-mark-core"></span>
+      </div>
+      <p class="hb-name">Happy Bite</p>
+      <p class="hb-note">Opening your kitchen…</p>
+      <div class="hb-bar" aria-hidden="true"></div>
+    </div>
+  </div>
+
   <div id="root"></div>
+
+  <!-- ================================================================
+       LOADING SCREEN — hook. Plain JS, no dependencies, not render-blocking
+       (it only registers listeners). The loader leaves when BOTH are true:
+         1. window "load" has fired (fonts, styles, scripts are in), and
+         2. the app has said it is ready — App.jsx calls window.hbReady()
+            once the kitchen is read, so the loader never reveals a
+            half-built screen.
+       A 15 s failsafe removes it regardless, so a failure is never hidden
+       behind a spinner forever.
+       ================================================================ -->
+  <script>
+    (function () {
+      var loaded = document.readyState === "complete", ready = false, gone = false;
+
+      function leave() {
+        var el = document.getElementById("hb-loader");
+        if (gone || !el) return;
+        gone = true;
+        var reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+        if (reduce) { el.remove(); return; }
+        el.classList.add("is-leaving");
+        el.addEventListener("transitionend", function () { el.remove(); }, { once: true });
+        setTimeout(function () { el.remove(); }, 700);          // if transitionend never fires
+      }
+      function check() { if (loaded && ready) leave(); }
+
+      window.hbReady = function () { ready = true; check(); };
+      window.addEventListener("load", function () { loaded = true; check(); }, { once: true });
+      setTimeout(leave, 15000);
+    })();
+  </script>
 </body>
 </html>

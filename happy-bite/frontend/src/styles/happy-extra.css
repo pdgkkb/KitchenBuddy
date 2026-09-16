@@ -28,7 +28,7 @@
   cursor: pointer;
   display: grid;
   place-items: center;
-  transition: border-color 0.15s ease, transform 0.15s ease;
+  transition: transform 0.15s ease;
 }
 
 .photo-thumb:hover { transform: translateY(-1px); }
@@ -62,7 +62,7 @@
 .option-cards { list-style: none; padding: 0; margin: 18px 0 8px; display: grid; gap: 12px; counter-reset: recipe-option; }
 .option-card { width: 100%; display: flex; align-items: center; gap: 14px; padding: 16px 14px; text-align: left;
   border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); color: var(--ink);
-  box-shadow: var(--lift); cursor: pointer; transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease; }
+  box-shadow: var(--lift); cursor: pointer; transition: transform .16s ease; }
 .option-card:hover { transform: translateY(-2px); border-color: var(--mint); box-shadow: var(--lift-lg); }
 .option-number { flex: none; width: 42px; height: 42px; display: grid; place-items: center; border-radius: 13px;
   background: var(--mint-wash); color: var(--mint-deep); font-size: 22px; font-weight: 850; }
@@ -71,19 +71,6 @@
 .option-card-text span, .option-card-text small { color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .option-card-text small { font-size: 12px; opacity: .8; }
 .option-card > .icon { color: var(--mint-deep); flex: none; }
-
-/* ------------------------------------------------------- receipt shortcut */
-
-.receipt-cta {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  flex-wrap: wrap;
-  margin: 4px 0 18px;
-}
-
-.receipt-cta.is-compact { margin: 0 0 12px; }
-.receipt-cta .btn { cursor: pointer; }
 
 /* ------------------------------------------------------ instant-answer tag */
 /* A parked answer arrives with no wait at all, which reads as suspicious

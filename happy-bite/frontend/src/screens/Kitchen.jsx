@@ -8,7 +8,7 @@
    (Rebuilt to match how the rest of the app uses this screen: a default
    export for the Kitchen tab, and a named `catOf` export.) */
 
-import { useMemo, useState } from "react";
+import { useDeferredValue, useMemo, useState } from "react";
 import * as E from "../core/engine.js";
 import { CATEGORIES } from "../data/index.js";
 import { useKitchen } from "../state/kitchen.jsx";
@@ -29,14 +29,15 @@ export default function Kitchen() {
   const ui = useUI();
   const [q, setQ] = useState("");
 
+  const deferredQ = useDeferredValue(q);
   const rows = useMemo(() => {
-    const query = q.trim().toLowerCase();
+    const query = deferredQ.trim().toLowerCase();
     return k.stock
       .filter(a => E.ref(a.id).name)
       .map(a => ({ a, d: E.daysLeft(a), cat: E.ref(a.id).category || "other" }))
       .filter(x => !query || nameOf(x.a.id).toLowerCase().includes(query))
       .sort((x, y) => x.d - y.d);
-  }, [k.stock, q]);
+  }, [k.stock, deferredQ]);
 
   const bins = useMemo(() => E.expiryHistogram(k.stock, 14), [k.stock]);
   const useSoon = k.stock.filter(a => E.daysLeft(a) <= 3).length;

@@ -15,6 +15,21 @@ Matching is deliberately blunt: normalised token overlap plus difflib. A fuzzy
 matcher that reaches too far would answer the wrong question confidently, which
 is much worse than a two-second wait, so the thresholds are set high and a miss
 simply falls through to the real model.
+
+BACKGROUND WORK MUST NEVER SLOW DOWN A QUESTION
+-----------------------------------------------
+On a local model this is not a detail. One step's answers are ~15 seconds of
+GPU on gemma-4-e2b; the browser asks for two steps at a time; and LM Studio
+runs requests side by side, so a question asked meanwhile shared the GPU with
+two background jobs and came back several times slower. That was a large part
+of "cooking mode lags". Now:
+
+  * background jobs run one at a time (a single slot);
+  * `foreground()` wraps every request someone is waiting on: while one is in
+    flight no background job starts, and any job already running is CANCELLED
+    — the HTTP request is dropped and the server stops generating;
+  * a cancelled step is simply not parked; the browser asks again when the
+    person is idle, and it starts over then.
 """
 
 from __future__ import annotations
@@ -23,6 +38,7 @@ import asyncio
 import json
 import re
 import time
+from contextlib import asynccontextmanager
 from difflib import SequenceMatcher
 
 TTL = 45 * 60              # a parked step is stale after this
@@ -126,6 +142,25 @@ class Prefetcher:
         self.enabled = bool(enabled)
         self.cache: dict[tuple[str, int], dict] = {}
         self._busy: set[tuple[str, int]] = set()
+        self._tasks: set[asyncio.Task] = set()
+        self._slot = asyncio.Semaphore(1)          # one background job at a time
+        self._foreground = 0
+        self._idle = asyncio.Event()
+        self._idle.set()
+
+    @asynccontextmanager
+    async def foreground(self):
+        """Someone is waiting on the model: get background work out of the way."""
+        self._foreground += 1
+        self._idle.clear()
+        for task in list(self._tasks):
+            task.cancel()
+        try:
+            yield
+        finally:
+            self._foreground -= 1
+            if self._foreground == 0:
+                self._idle.set()
 
     # ---------------------------------------------------------------- write
 
@@ -141,7 +176,9 @@ class Prefetcher:
             got["touched"] = time.time()
             return False
         self._busy.add(key)
-        asyncio.create_task(self._fill(key, recipe, step, serves))
+        task = asyncio.create_task(self._fill(key, recipe, step, serves))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
         return True
 
     def prime(self, recipe: dict, step: int, serves: int | None = None) -> None:
@@ -152,40 +189,48 @@ class Prefetcher:
 
     async def _fill(self, key, recipe: dict, step: int, serves: int | None) -> None:
         try:
-            steps = recipe.get("steps") or []
-            if not (0 <= step < len(steps)):
-                return
-            s = steps[step]
-            body = {
-                "recipe": recipe.get("name"),
-                "cuisine": recipe.get("cuisine"),
-                "cooking_for": serves or recipe.get("serves"),
-                "step_number": step + 1,
-                "of": len(steps),
-                "step": s.get("do"),
-                "heat": s.get("heat"),
-                "watch_for": s.get("cue"),
-                "why": s.get("why"),
-                "about_minutes": s.get("minutes"),
-                "all_steps": [x.get("do") for x in steps],
-            }
-            user = (f"Write the {self.count} most likely questions and answers for step "
-                    f"{step + 1}.\n\n" + json.dumps(body, ensure_ascii=False)[:6000])
-            out = await self.llm.json(SYSTEM, user, schema(self.count), 900)
-            pairs = []
-            for p in (out or {}).get("pairs") or []:
-                q = str(p.get("q") or "").strip()[:200]
-                a = str(p.get("a") or "").strip()[:600]
-                if q and a:
-                    pairs.append({"q": q, "a": a})
-            if pairs:
-                self.cache[key] = {"pairs": pairs[:self.count], "at": time.time(),
-                                   "touched": time.time()}
-                self._evict()
+            await self._idle.wait()                # never start while a question is out
+            async with self._slot:
+                await self._idle.wait()
+                await self._write(key, recipe, step, serves)
+        except asyncio.CancelledError:
+            pass                                   # a question came in; asked again later
         except Exception as e:  # noqa: BLE001 — a miss just means the slow path
             print("prefetch failed:", type(e).__name__, e)
         finally:
             self._busy.discard(key)
+
+    async def _write(self, key, recipe: dict, step: int, serves: int | None) -> None:
+        steps = recipe.get("steps") or []
+        if not (0 <= step < len(steps)):
+            return
+        s = steps[step]
+        body = {
+            "recipe": recipe.get("name"),
+            "cuisine": recipe.get("cuisine"),
+            "cooking_for": serves or recipe.get("serves"),
+            "step_number": step + 1,
+            "of": len(steps),
+            "step": s.get("do"),
+            "heat": s.get("heat"),
+            "watch_for": s.get("cue"),
+            "why": s.get("why"),
+            "about_minutes": s.get("minutes"),
+            "all_steps": [x.get("do") for x in steps],
+        }
+        user = (f"Write the {self.count} most likely questions and answers for step "
+                f"{step + 1}.\n\n" + json.dumps(body, ensure_ascii=False)[:6000])
+        out = await self.llm.json(SYSTEM, user, schema(self.count), 700)
+        pairs = []
+        for p in (out or {}).get("pairs") or []:
+            q = str(p.get("q") or "").strip()[:200]
+            a = str(p.get("a") or "").strip()[:600]
+            if q and a:
+                pairs.append({"q": q, "a": a})
+        if pairs:
+            self.cache[key] = {"pairs": pairs[:self.count], "at": time.time(),
+                               "touched": time.time()}
+            self._evict()
 
     def _evict(self) -> None:
         if len(self.cache) <= MAX_STEPS:
