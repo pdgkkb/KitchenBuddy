@@ -1,6 +1,6 @@
 /* Happy Bite — hands-free wake word.
 
-   The tablet listens for a short phrase ("Hey Chef") and, on hearing it, opens
+   The tablet listens for a short phrase ("Bob") and, on hearing it, opens
    the microphone for the real command. Two layers, on purpose:
 
    - Wake spotting uses the browser's continuous SpeechRecognition. It only ever
@@ -43,30 +43,82 @@ export const WAKE_REASON = {
   unsupported: "This browser has no speech recogniser. Chrome, Edge and Safari have one; Firefox does not.",
 };
 
-const norm = (s) => s.toLowerCase().replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
+const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z ]/g, " ").replace(/\s+/g, " ").trim();
 
-/* Loose matching so a natural "hey, chef" or a small mishear still fires. */
+export const DEFAULT_WAKE = "bob";
+
+/* What a recogniser writes instead of the wake word. A one-syllable name is
+   the hard case: "Bob" comes back as "Bobby", "Bop" or "Bab" often enough that
+   matching the spelling alone makes it feel deaf. Deliberately NOT every word
+   one letter away — "boy" and "box" start sentences too. */
+const SOUNDS_LIKE = {
+  bob: ["bob", "bobb", "bobby", "bobs", "bop", "bopp", "bab"],
+  chef: ["chef", "shef", "jeff"],
+};
+const GREETING = new Set(["hey", "hi", "ok", "okay", "oh", "yo"]);
+// What may come before the name when it's said TO it: "um, okay Bob".
+const FILLER = new Set([...GREETING, "um", "uh", "er", "so", "and", "right", "well", "alright"]);
+
+/* Where the wake word is in `heard`: the index of the first word after it,
+   or -1. `first` means only filler words may come before it.
+
+   A greeting in the phrase ("hey chef") is optional when it is said — "ok
+   chef" and "chef" both count — but a bare "chef" only counts in a short
+   utterance, or "the chef said" would wake it. */
+function findWake(phrase, words, first = false) {
+  const all = norm(phrase || DEFAULT_WAKE).split(" ").filter(Boolean);
+  const greeted = all.length > 1 && GREETING.has(all[0]);
+  const want = (greeted ? all.slice(1) : all).map(w => new Set(SOUNDS_LIKE[w] || [w]));
+  for (let i = 0; i < words.length; i++) {
+    if (first && i > 0 && !FILLER.has(words[i - 1])) break;
+    if (i + want.length > words.length) break;
+    if (!want.every((set, k) => set.has(words[i + k]))) continue;
+    if (greeted && !(i > 0 && GREETING.has(words[i - 1])) && words.length > want.length + 2) continue;
+    return i + want.length;
+  }
+  return -1;
+}
+
+/* "bob" -> "Bob", for putting on the screen. */
+export const wakeLabel = (phrase) =>
+  norm(phrase || DEFAULT_WAKE).replace(/\b[a-z]/g, c => c.toUpperCase());
+
+/* What was said AFTER the wake word, as it was said — or null when the wake
+   word wasn't at the start.
+
+     "Bob, how long for the onions?"  -> "how long for the onions?"
+     "Bob."                           -> ""
+     "tell Bob the pan is hot"        -> null
+
+   Only "hey", "ok", "um" and the like may come before it: someone who says the
+   name in the middle of a sentence is talking about Bob, not to him. The
+   always-on recogniser passes `anywhere`, because its transcript can start
+   with whatever was said in the room before the name. */
+export function afterWake(phrase, heard, anywhere = false) {
+  const raw = String(heard || "").trim().split(/\s+/).filter(Boolean);
+  const words = [], owner = [];                    // each word, and the raw token it came from
+  raw.forEach((token, r) => norm(token).split(" ").filter(Boolean).forEach(w => { words.push(w); owner.push(r); }));
+  const end = findWake(phrase, words, !anywhere);
+  if (end < 0) return null;
+  const from = end < words.length ? owner[end] : raw.length;
+  return raw.slice(from).join(" ").replace(/^[\s,.;:!?-]+/, "");
+}
+
+/* Loose matching for the always-on recogniser: anywhere in what it heard. */
 function makeMatcher(phrase) {
-  const want = norm(phrase);
-  const head = want.split(" ")[0];                 // e.g. "hey"
-  const tail = want.split(" ").slice(1).join(" "); // e.g. "chef"
-  const variants = [want, want.replace(/\s+/g, ""), `${head} ${tail}`, `ok ${tail}`, `hi ${tail}`];
-  return (heard) => {
-    const h = norm(heard);
-    return variants.some(v => v && h.includes(v)) ||
-           (tail.length >= 3 && h.includes(tail) && h.length <= tail.length + 6);
-  };
+  return (heard) => findWake(phrase, norm(heard).split(" ").filter(Boolean)) >= 0;
 }
 
 /* Arm the wake word. Returns { stop } to disarm.
 
-   onWake()                 the phrase was heard
+   onWake(rest)             the phrase was heard; `rest` is what was said after
+                            it in the same breath ("" for the name alone)
    onHeard(text, matched)   every transcript, matched or not — this is what
                             turns "it doesn't work" into "Chrome hears Jeff"
    onStatus(state, detail)  "starting" | "armed" | "error" | "off"
    onError(message)         a human sentence, only for things worth saying
 */
-export function startWakeWord({ phrase = "hey chef", onWake, onError, onStatus, onHeard, lang } = {}) {
+export function startWakeWord({ phrase = DEFAULT_WAKE, onWake, onError, onStatus, onHeard, lang } = {}) {
   const state = wakeSupported();
   if (state !== "ok") {
     onStatus?.("error", WAKE_REASON[state]);
@@ -81,6 +133,20 @@ export function startWakeWord({ phrase = "hey chef", onWake, onError, onStatus, 
   let cooldown = 0;                                 // ignore repeats right after a fire
   let heardAnything = false;
   let deadStarts = 0;                               // started and died with nothing heard
+  let pending = null;                               // heard the name, waiting for the sentence
+
+  /* The name shows up in an INTERIM result, before the sentence is over.
+     Firing then would open the command microphone halfway through "Bob, I'm
+     drained, give me…" and lose the words that matter. So wait for the final
+     result, which carries the whole sentence; every interim result that still
+     has the name in it pushes the wait back, so it only runs out once they
+     have stopped talking. */
+  const WAIT_FOR_FINAL = 1500;
+  const fire = (rest) => {
+    clearTimeout(pending); pending = null;
+    cooldown = Date.now() + 3000;                   // don't double-trigger
+    onWake?.(rest);
+  };
 
   const start = () => {
     if (stopped) return;
@@ -99,12 +165,10 @@ export function startWakeWord({ phrase = "hey chef", onWake, onError, onStatus, 
         const text = e.results[i][0]?.transcript || "";
         const hit = matches(text);
         if (text.trim()) onHeard?.(text.trim(), hit);
-        if (hit) {
-          if (now < cooldown) return;
-          cooldown = now + 3000;                    // don't double-trigger
-          onWake?.();
-          return;
-        }
+        if (!hit || now < cooldown) continue;
+        if (e.results[i].isFinal) return fire(afterWake(phrase, text, true) || "");
+        clearTimeout(pending);
+        pending = setTimeout(() => fire(""), WAIT_FOR_FINAL);
       }
     };
 
@@ -168,6 +232,7 @@ export function startWakeWord({ phrase = "hey chef", onWake, onError, onStatus, 
     stop() {
       stopped = true;
       clearTimeout(restartTimer);
+      clearTimeout(pending);
       try { rec?.stop(); } catch { /* already stopped */ }
       onStatus?.("off");
     }

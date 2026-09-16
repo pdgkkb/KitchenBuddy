@@ -58,17 +58,30 @@ How to answer:
 - Plain text only: no markdown headers, no tables. A short list is fine when
   the answer really is a list.
 - Reply in the language they write in.
-- When they ask what's in the kitchen, don't read the whole shelf back or recite
-  amounts. Answer like a cook glancing over it: name the handful of real
-  meal-building things (the proteins, vegetables, staples) that could come
-  together into a dish, and skip the salt-and-spice clutter. No grams, no counts,
-  no ids — "You've got chicken, courgettes, tomatoes, onions and pasta — enough
-  for a good dinner." Only give an amount if they ask for one specifically.
+Questions about what's in their kitchen — answer from the list below, which is
+grouped by shelf, and say exactly as much as they asked for:
+- "What's in the kitchen?" — don't read the whole shelf back or recite amounts.
+  Answer like a cook glancing over it: name the handful of real meal-building
+  things (the proteins, vegetables, staples) that could come together into a
+  dish, and skip the salt-and-spice clutter. No grams, no counts, no ids —
+  "You've got chicken, courgettes, tomatoes, onions and pasta — enough for a
+  good dinner."
+- "What (type of) meat / fish / veg / cheese do we have?" — name ONLY the items
+  of that kind, from that shelf. No amounts, nothing from other shelves, no
+  chicken stock under meat. "You've got chicken breast and bacon."
+- "Do we have eggs?" — yes or no, with the item's name. No amount.
+- "How much chicken / how many eggs do we have?" — the exact amount from the
+  list, said the way a person says it: "450 grams of chicken breast", "6 eggs",
+  "1.5 litres of milk". Never round it into "plenty" and never guess. If it
+  isn't on the list, they have none — say so.
+- Only ever give an amount when they asked how much or how many.
 
 Changing their kitchen — you have tools:
 - When they tell you something changed, use the tool, then confirm in one plain
   sentence. "I used 100 g of milk" -> adjust_stock, then "Done — milk's down to
-  about 900 ml." Never touch stock, timers or the recipe book unless they've
+  about 900 ml." "Add 200 grams of chicken" / "I bought chicken" -> add_stock
+  with the amount they said, then "Added 200 grams of chicken — you've got 650
+  grams now." If they didn't say how much, ask before calling anything. Never touch stock, timers or the recipe book unless they've
   actually asked or told you; don't act on a hypothetical.
 - NEVER add an ingredient they didn't say they have — not even to make a recipe
   work. If a dish needs garlic and there's none in their kitchen, say so and
@@ -105,6 +118,28 @@ def _ids_block(ids: str, customs: dict | None) -> str:
                 "don't recreate them): "
                 + ", ".join(f"{k} ({v.get('unit', 'g')})" for k, v in extra.items()))
     return out
+
+
+def _stock_by_shelf(stock: list[dict], customs: dict | None) -> str:
+    """The stock list under shelf headings — Meat, Fish, Dairy & eggs…
+
+    The browser sends names and amounts but no category, and a model that is
+    asked "what meat do we have" cannot tell from "Chicken stock (id
+    c_chicken_stock)" alone which shelf it sits on. A heading per shelf costs a
+    few tokens; a line per item saying its category would cost one per item."""
+    from .catalog import catalog
+    cat = catalog()
+    shelves = {c["id"]: c["name"] for c in cat["categories"]}
+    shelves["other"] = "Other"
+    groups: dict[str, list[str]] = {}
+    for s in stock:
+        info = cat["ingredients"].get(s.get("id")) or (customs or {}).get(s.get("id")) or {}
+        shelf = shelves.get(info.get("category"), "Other")
+        line = (f"- {s.get('name')} (id {s.get('id')}): {s.get('qty')} {s.get('unit')}"
+                + (f" (use within {s['daysLeft']} days)"
+                   if isinstance(s.get("daysLeft"), int) and s["daysLeft"] <= 3 else ""))
+        groups.setdefault(shelf, []).append(line)
+    return "\n".join(f"{shelf}:\n" + "\n".join(lines) for shelf, lines in groups.items())
 
 
 def _strip_tiny_times(recipe: dict) -> dict:
@@ -276,10 +311,7 @@ def chef_system(ctx: dict, attachment: dict | None, ids: str = "", customs: dict
     stock = ctx.get("stock") or []
     if stock:
         limit = 30 if cooking else 60
-        lines = [f"- {s.get('name')} (id {s.get('id')}): {s.get('qty')} {s.get('unit')}"
-                 + (f" (use within {s['daysLeft']} days)" if isinstance(s.get("daysLeft"), int) and s["daysLeft"] <= 3 else "")
-                 for s in stock[:limit]]
-        parts.append("In their kitchen right now:\n" + "\n".join(lines))
+        parts.append("In their kitchen right now, by shelf:\n" + _stock_by_shelf(stock[:limit], customs))
 
     recipe = ctx.get("recipe")
     step = ctx.get("step")
@@ -341,8 +373,27 @@ def _retrieved_text(recipes: list[dict]) -> str:
     return "\n".join(out)[:RAG_CHARS]
 
 
+def time_rule(budget: int | None) -> str:
+    """The time a recipe has to fit in, said so it cannot be missed.
+
+    Put at the END of the system prompt on purpose: a small model weighs the
+    last thing it read most, and this is the rule it broke hardest — four hours
+    of boiled courgettes for someone who wanted dinner."""
+    if not budget:
+        return ("TIME: they asked for something that takes its time. Give honest "
+                "minutes on every step.")
+    short = budget <= 20
+    return f"""TIME — THE MOST IMPORTANT RULE: they have {budget} minutes, start to finish,
+chopping included. The step minutes MUST add up to {budget} or less, and the
+recipe's "minutes" is that sum. {"Three or four steps. One pan. " if short else ""}Pick a dish that is
+naturally that quick (eggs, stir-fries, fried rice, quesadillas, pasta with a
+pan sauce, a warm salad) — never a slow dish squeezed into a short time.{
+"""
+Use ONLY what is in the kitchen: nothing to buy.""" if budget <= 30 else ""}"""
+
+
 def recipe_system(id_list: str, stock_lines: str, serves: int,
-                  retrieved: list[dict] | None = None) -> str:
+                  retrieved: list[dict] | None = None, budget: int | None = None) -> str:
     system = f"""You write recipes for a kitchen app used by tired people standing up.
 The recipes must be genuinely good: real technique, balanced seasoning, a
 reason to look forward to dinner. Not "healthy bowl" filler.
@@ -362,12 +413,12 @@ then make a fresh recipe.
 
 {RULES}"""
     if retrieved:
-        return system + ("\n\nReference recipes retrieved for this request. Use them only to "
-                         "understand broad ingredient pairings and techniques. Create a "
-                         "new recipe with a different name, ingredient combination or "
-                         "method; never reproduce a reference recipe or its wording. "
-                         "Follow the valid ingredient-id rules above:\n" + _retrieved_text(retrieved))
-    return system
+        system += ("\n\nReference recipes retrieved for this request. Use them only to "
+                   "understand broad ingredient pairings and techniques. Create a "
+                   "new recipe with a different name, ingredient combination or "
+                   "method; never reproduce a reference recipe or its wording. "
+                   "Follow the valid ingredient-id rules above:\n" + _retrieved_text(retrieved))
+    return system + "\n\n" + time_rule(budget)
 
 
 def recipe_options_system(id_list: str, stock_lines: str, serves: int,
@@ -377,8 +428,8 @@ def recipe_options_system(id_list: str, stock_lines: str, serves: int,
 
 
 def recipe_ideas_system(id_list: str, stock_lines: str, serves: int,
-                        retrieved: list[dict] | None = None) -> str:
-    base = recipe_system(id_list, stock_lines, serves, retrieved)
+                        retrieved: list[dict] | None = None, budget: int | None = None) -> str:
+    base = recipe_system(id_list, stock_lines, serves, retrieved, budget)
     return base + "\n\nReturn exactly two concise recipe ideas only. Do not write ingredients or steps yet. Give each a distinct name, one-sentence description, cuisine, minutes, and difficulty. Decide everything yourself from the kitchen and request; do not ask questions."
 
 

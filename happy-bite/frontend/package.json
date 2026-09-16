@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test src/core/engine.test.js"
+    "test": "node --test src/core/engine.test.js src/lib/stockcmd.test.js src/lib/wake.test.js src/core/window.test.js"
   },
   "dependencies": {
     "@fontsource-variable/figtree": "^5.1.0",

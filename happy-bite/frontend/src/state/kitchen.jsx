@@ -24,7 +24,7 @@ const DEFAULT_PEOPLE = [
 const PERSISTED = {
   people: DEFAULT_PEOPLE, diners: null, stock: null, planned: [], bought: [], wishlist: [],
   corrections: {}, customs: {}, taste: E.EMPTY_TASTE, filters: {}, myRecipes: [], history: [],
-  prefs: { speakReplies: false, readSteps: false, bgAnim: true },
+  prefs: { speakReplies: false, readSteps: false, bgAnim: true, handsFree: true },
   /* What they can cook ON. null means NOBODY HAS SAID — which is not the same
      as owning nothing, and the difference matters: on null the app says nothing
      about equipment at all rather than telling someone their kitchen is missing

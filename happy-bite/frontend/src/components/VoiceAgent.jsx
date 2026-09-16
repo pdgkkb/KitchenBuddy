@@ -22,9 +22,16 @@
    3. And it was silent about every way it can fail. Now its state is on the
       screen, under the button: armed, or the sentence saying why not.
 
-   Off by default is deliberate and stays: arming it holds the microphone open,
-   and in Chrome the browser streams what it hears to Google to recognise it.
-   That is a decision for the person in the kitchen. */
+   4. On by default now. Saying "Bob" is the whole point of a kitchen app you
+      use with your hands full, and a feature you have to find a long press
+      for is one most people never meet. It still holds the microphone open,
+      and in Chrome the browser streams what it hears to Google to recognise
+      it — the settings sheet says so, and a long press or that sheet turns it
+      off. Only an explicit "off" counts as off: a household whose saved
+      preferences predate this switch gets it on.
+
+   "Bob, I'm drained. Give me 15 minutes." in one breath goes straight through
+   as the request. "Bob" on its own chimes and listens for the next sentence. */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as voice from "../lib/voice.js";
@@ -105,7 +112,7 @@ export default function VoiceAgent() {
   const pressRef = useRef(null);                       // long-press timer
   const heldRef = useRef(false);
 
-  const handsFree = !!k.prefs?.handsFree;
+  const handsFree = k.prefs?.handsFree !== false;
   const canListen = ui.server.voice || browserCanListen();
 
   /* Writing a recipe is not a conversation. While the create or link panel is
@@ -119,7 +126,9 @@ export default function VoiceAgent() {
 
   const stopWake = () => { try { wakeRef.current?.stop(); } catch { /* */ } wakeRef.current = null; };
 
-  const oneTurn = useCallback(() => {
+  /* `preset` is something already heard — the words said straight after the
+     wake word — handled as if this turn had just recognised it. */
+  const oneTurn = useCallback((preset) => {
     if (!activeRef.current) return;
     const onServer = voiceServerRef.current;
     setVstate("listening");
@@ -173,12 +182,14 @@ export default function VoiceAgent() {
       setTimeout(() => activeRef.current && oneTurn(), 800);
     };
 
+    if (preset) { handle(preset); return; }
+
     listenRef.current = onServer
       ? voice.listenVAD({ onText: handle, onError: () => onError(null) })
       : browserTurn({ onText: handle, onError });
   }, []);
 
-  const start = useCallback(() => {
+  const start = useCallback((said = "") => {
     if (!canListenRef.current) {
       uiRef.current.say(window.isSecureContext === false
         ? "Listening needs a secure connection — use localhost, or serve the app over https."
@@ -192,7 +203,7 @@ export default function VoiceAgent() {
     stopWake();
     activeRef.current = true;
     setActive(true);
-    oneTurn();
+    oneTurn(typeof said === "string" ? said.trim() : "");
   }, [oneTurn]);
 
   const stop = useCallback(() => {
@@ -219,8 +230,9 @@ export default function VoiceAgent() {
     setWakeState("starting");
     setWakeWhy("");
     wakeRef.current = wake.startWakeWord({
-      phrase: ui.server.wakeWord || "hey chef",
-      onWake: () => startRef.current(),
+      phrase: ui.server.wakeWord || wake.DEFAULT_WAKE,
+      // A bare "Bob" gets the chime, so you know it's listening before you talk.
+      onWake: async (rest) => { if (!rest) await voice.chime(); startRef.current(rest); },
       onStatus: (state, detail) => { setWakeState(state); if (detail) setWakeWhy(detail); },
       onHeard: (text, matched) => { if (!matched) setLastSaid(""); void text; },
       onError: (msg) => { if (msg) uiRef.current.say(msg); },
@@ -245,19 +257,19 @@ export default function VoiceAgent() {
       const next = !handsFree;
       setPref("handsFree", next);
       uiRef.current.say(next
-        ? `Hands-free on — say "${ui.server.wakeWord || "hey chef"}". Chrome sends what it hears to Google while this is on.`
+        ? `Hands-free on — say "${wake.wakeLabel(ui.server.wakeWord)}". Chrome sends what it hears to Google while this is on.`
         : "Hands-free off.");
     }, 550);
   };
   const release = () => { clearTimeout(pressRef.current); };
   const tap = () => {
     if (heldRef.current) { heldRef.current = false; return; }   // that was the long press
-    active ? stop() : start();
+    active ? stop() : start();   // a click event is not something that was said
   };
 
   const hint = active ? label
     : !handsFree ? null
-    : wakeState === "armed" || wakeState === "starting" ? `Say “${ui.server.wakeWord || "hey chef"}”`
+    : wakeState === "armed" || wakeState === "starting" ? `Say “${wake.wakeLabel(ui.server.wakeWord)}”`
     : wakeState === "error" ? wakeWhy
     : null;
 

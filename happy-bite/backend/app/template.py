@@ -148,8 +148,34 @@ def score(candidate: dict, pantry: set[str]) -> dict:
     }
 
 
+# "10 to 15 minutes", "1 hour", "2-3 hrs". The upper end of a range counts.
+_TIMES = re.compile(r"(\d+)(?:\s*(?:-|to|or)\s*(\d+))?\s*(min|minutes?|mins|hours?|hrs?)\b", re.I)
+_SLOW_WORDS = re.compile(r"\b(overnight|marinate|refrigerate|chill|freeze|rise|slow cooker|crock ?pot)\b", re.I)
+
+
+def fits_time(instructions: str, budget: int | None) -> bool:
+    """Could this method be cooked in `budget` minutes?
+
+    The corpus says nothing about total time, but its methods do: a recipe
+    that bakes for 45 minutes, or marinates overnight, is not dinner in
+    fifteen however well it matches the fridge. Conservative on purpose —
+    the times written down are a floor, since chopping never is."""
+    if not budget:
+        return True
+    text = str(instructions or "")
+    if _SLOW_WORDS.search(text):
+        return False
+    total = 0
+    for low, high, unit in _TIMES.findall(text):
+        n = int(high or low) * (60 if unit.lower().startswith("h") else 1)
+        if n > budget:
+            return False
+        total += n
+    return total <= budget
+
+
 async def pick(rag, query: str, stock_names: list[str], floor: float = FLOOR,
-               candidates: int = CANDIDATES) -> dict | None:
+               candidates: int = CANDIDATES, max_minutes: int | None = None) -> dict | None:
     """The corpus recipe this kitchen can already cook, or None.
 
     `rag` is the RecipeRetriever. A retriever that is off, still building or
@@ -163,6 +189,8 @@ async def pick(rag, query: str, stock_names: list[str], floor: float = FLOOR,
     pantry = pantry_words(stock_names)
     best, best_score = None, None
     for hit in hits:
+        if not fits_time(hit.get("instructions"), max_minutes):
+            continue
         s = score(hit, pantry)
         if s["ratio"] < floor:
             continue

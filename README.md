@@ -327,7 +327,8 @@ the house) leave the machine.
 | `KOKORO_VOICE` / `KOKORO_LANG` | `af_heart` / `a` | |
 | `SAY_VOICE` | — | system voice name (`say -v ?` lists them) |
 | `PIPER_VOICE` / `PIPER_CONFIG` | — | path to a Piper `.onnx` voice |
-| `WAKE_WORD` | `hey chef` | |
+| `WAKE_WORD` | `bob` | the name the app listens for: anywhere while hands-free is on, and before every command in cooking mode |
+| `TTS_MODEL` / `TTS_VOICE` / `STT_MODEL` | `gpt-4o-mini-tts` / `coral` / `gpt-4o-mini-transcribe` | cloud voice, only with `SPEECH_PROVIDER=openai` |
 | **Pictures** | | |
 | `IMAGE_PROVIDER` | `openai` | `openai` \| `local` \| `none` |
 | `IMAGE_MODEL` | `gpt-image-1` | local: e.g. `stabilityai/sd-turbo` |
@@ -349,6 +350,15 @@ the house) leave the machine.
 recipes plus your saved ones), **Receipt**, **Shopping** — plus the chef chat and
 cooking mode on top.
 
+### "I'm drained. Give me 15 minutes."
+
+The first button on Today. One tap, no questions: the assistant writes **one**
+dinner from what is already in the kitchen, with nothing to buy, that is on the
+table in 15 minutes, and opens it. Saying or typing the same thing to the chef
+does the same — *"Bob, I'm drained, give me 15 minutes"*, *"I've got 20
+minutes"*, *"I'm exhausted"*. With the assistant off, the button filters the
+recipe book to easy dishes under 15 minutes instead.
+
 ### Chef chat and actions
 
 The chef can change your kitchen through tools, validated in
@@ -369,13 +379,35 @@ for 12 minutes"*.
 
 ### Recipe writing
 
-1. **Template first.** [`app/template.py`](happy-bite/backend/app/template.py)
-   looks for a corpus recipe whose ingredients you mostly already have
-   (`TEMPLATE_FLOOR`) and converts it to the app's format, scaled to the people
-   eating. Converting is much cheaper for a local model than inventing.
-2. **Otherwise write**, with similar corpus recipes retrieved as reference
+1. **A time limit.** Every request gets one, read from what was asked
+   (`recipes.time_budget`): **20 minutes** by default, **15** for "I'm drained",
+   "tired" or "quick", the number they give ("give me 15 minutes", "half an
+   hour"), and **no limit** when they ask for something slow ("a slow Sunday
+   roast", the "Take our time" chip). The limit goes into the prompt as its most
+   important rule; for 30 minutes or less the recipe must also use only what is
+   in the kitchen. `POST /api/recipes/generate` accepts `maxMinutes` to set it
+   directly.
+2. **Template first** — but not for a quick dinner.
+   [`app/template.py`](happy-bite/backend/app/template.py) looks for a corpus
+   recipe whose ingredients you mostly already have (`TEMPLATE_FLOOR`), whose
+   written times fit the limit, and converts it to the app's format, scaled to
+   the people eating. For a limit of 30 minutes or less this step is skipped:
+   corpus methods are rarely that short, and a failed conversion cost more time
+   than writing one.
+3. **Otherwise write**, with a similar corpus recipe retrieved as reference
    ([`app/rag.py`](happy-bite/backend/app/rag.py), SQLite FTS5, no extra service).
-3. Either way the result passes `clean_recipe`.
+4. **Check, and send it back once.** The result passes `clean_recipe`, then
+   `recipe_problems` looks for what a small model gets wrong: steps adding up to
+   more than the limit, a step that says "255 minutes", a step naming a food the
+   recipe doesn't contain ("mix in the hummus"), too many steps, or something to
+   buy on a quick dinner. If it finds any, the model is asked again **once**,
+   with that exact list. If the second attempt is still wrong, the better one is
+   shown with a *"Check this one before you start"* box listing the problems.
+
+`clean_recipe` also tidies what small models fill in for the sake of it: a cue
+of "n/a", a heat on a step that never touches the hob, method sentences in an
+ingredient's prep, a total time that doesn't match the steps, and ids written as
+names (`"Spinach (g)"` becomes `spinach`).
 
 `POST /api/recipes/generate/stream` streams progress so the UI can show what the
 model is doing.
@@ -383,12 +415,22 @@ model is doing.
 ### Cooking mode
 
 One step at a time, large, with heat and what-to-watch-for beside it. With local
-voice on it listens continuously:
+voice on it listens, but only acts on what is said to it by name (`WAKE_WORD`,
+default **Bob**), so conversation and the radio don't move the recipe on:
 
-- **"next" / "back" / "repeat"**, **"start a timer"**, or any question — answered
-  aloud in a sentence or two.
-- **"stop chef"** stops talking, **"stop timer"** cancels a timer, **"stop
-  cooking"** ends the session.
+- **"Bob, next" / "Bob, back" / "Bob, repeat"**, **"Bob, start a timer"**, or
+  "Bob, …" and any question — answered aloud in a sentence or two. "Bob" on its
+  own chimes and listens for the next sentence.
+- **"Bob, stop chef"** stops talking, **"Bob, stop timer"** cancels a timer,
+  **"Bob, stop cooking"** ends the session.
+- **The gap in a step:** on a timed cooking step the screen shows a small window
+  and one job that fits in it, and says it out loud when the timer starts —
+  *"You have a 90-second window. Rinse the knife and the cutting board."* Frying
+  gives 90 seconds (the pan needs a stir); simmering or baking gives the whole
+  step less a minute. The job is read off the recipe itself — prep for the next
+  step, rinsing what has been used, putting things back in the fridge, setting
+  the table — so it needs no model and never repeats itself.
+  ([`core/window.js`](happy-bite/frontend/src/core/window.js))
 - **Answers before you ask:** for the current and next step, the server
   pre-generates likely questions and answers
   ([`app/prefetch.py`](happy-bite/backend/app/prefetch.py)); a close match is
@@ -459,7 +501,7 @@ under `recipeId::<sorted equipment ids>`, so buying an air fryer invalidates the
 |---|---|---|
 | Hearing | Parakeet TDT 0.6B on MLX | MLX Whisper → faster-whisper (CPU) |
 | Speaking | Kokoro-82M on MLX | Kokoro (torch, CPU) → Piper → macOS `say` |
-| Wake word | browser `SpeechRecognition` (Chrome, Safari) | — |
+| Wake word | browser `SpeechRecognition` (Chrome, Edge, Safari) — on by default | — |
 
 Speaking is a **chain**: if an engine won't load, or loads but can't produce sound
 (Kokoro without `misaki` does exactly that), the next one takes over and the log
@@ -481,8 +523,15 @@ is normal.
 **Measured on an Apple Silicon Mac:** a short phrase takes ~0.15–0.25 s to
 synthesise, a full sentence ~0.6 s.
 
-**The wake-word caveat:** spotting "hey chef" uses the browser's speech
-recogniser, which in Chrome sends audio to Google while hands-free is armed. The
+**Saying "Bob":** hands-free is **on by default**. Anywhere in the app, say
+*"Bob"* and what you want in one breath (*"Bob, I'm drained, give me 15
+minutes"*), or *"Bob"*, wait for the chime, then talk. The browser asks for the
+microphone the first time. Turn it off in the settings sheet (gear icon on
+Today), or by holding the mic button down.
+
+**The wake-word caveat:** spotting "Bob" uses the browser's speech
+recogniser, which in Chrome sends audio to Google while hands-free is armed, so
+it needs an internet connection. The
 command after the wake word is transcribed locally. A fully on-device wake word
 would use openWakeWord with `onnxruntime-web` (melspectrogram → embedding → wake
 model ONNX files in `frontend/public/wake/`), keeping the same
@@ -550,9 +599,11 @@ resumed.
 
 ## Training your own model
 
-`happy-bite/training/` fine-tunes Qwen with QLoRA. Optional; runs on your machine.
-On a 16 GB Mac it defaults to `Qwen/Qwen2.5-1.5B-Instruct` on MPS; a 7B may run out
-of memory (7B is the default on an NVIDIA GPU — see the Windows README).
+`happy-bite/training/` fine-tunes Qwen with LoRA. Optional; runs on your machine.
+On a Mac it trains on MPS without 4-bit quantization (bitsandbytes is
+NVIDIA-only) and defaults to `Qwen/Qwen2.5-1.5B-Instruct`, which fits a 16 GB Mac;
+a 7B may run out of memory. On an NVIDIA GPU it uses 4-bit QLoRA and defaults to
+7B — see the Windows README.
 
 ```bash
 cd happy-bite/training
@@ -578,7 +629,9 @@ python export_ollama.py                  # merge adapters, write an Ollama Model
 - Other sources: `--dataset owner/name` or `--csv path.csv`.
 
 Tool calling works without fine-tuning — instruct models support it natively.
-Fine-tuning mainly improves recipe quality and id grounding.
+Fine-tuning mainly improves recipe quality and id grounding. It does not make
+the model pick a particular dish: for a dinner that must come out the same every
+time (a demo, say), save that recipe in the book instead.
 
 ---
 
@@ -591,7 +644,7 @@ Fine-tuning mainly improves recipe quality and id grounding.
 | `python check_voice.py` | `happy-bite/backend` (server stopped) | full trace of a speak → encode → hear round trip; saves `voice-check.wav` |
 | `python3 check_model.py` | repo root | what your model server is really doing: model loaded, tokens/s, whether it reasons, time for a real recipe (reads `backend/.env`; `--url`, `--model`, `--budget`, `--wait`) |
 | `python3 audit.py` | repo root | faults in the seed recipes |
-| `npm test` | `happy-bite/frontend` | core engine tests |
+| `npm test` | `happy-bite/frontend` | engine, wake word, stock commands and cooking-window tests |
 
 ---
 
@@ -602,15 +655,17 @@ KitchenBuddy/
 ├── README.md                       macOS guide (this file)
 ├── README-Windows.md               Windows guide
 ├── audit.py, check_model.py        diagnostics
+├── data/                           standalone ChromaDB data engine prototype (see data/README_DATA.md)
 └── happy-bite/
     ├── backend/
     │   ├── app/
     │   │   ├── main.py             app, start-up, serves frontend/dist
     │   │   ├── config.py           every setting
+    │   │   ├── context.py          the model's loaded context window
     │   │   ├── api.py              status, chat, recipes, import, images, speech
     │   │   ├── api_extra.py        recipe images, cooking prefetch, receipts, adapt, health
     │   │   ├── actions.py          tool schemas + validation
-    │   │   ├── recipes.py          clean_recipe — the untrusted-output gate
+    │   │   ├── recipes.py          clean_recipe, time limits, recipe_problems — the untrusted-output gate
     │   │   ├── template.py         cook an existing corpus recipe
     │   │   ├── rag.py              corpus retrieval (SQLite FTS5)
     │   │   ├── prompts.py          system prompts
@@ -632,17 +687,18 @@ KitchenBuddy/
     │   └── media/                  generated, not in git
     ├── frontend/
     │   ├── src/
-    │   │   ├── core/               offline engine, equipment, intent (no model)
+    │   │   ├── core/               offline engine, equipment, intent, cooking windows (no model)
     │   │   ├── state/              kitchen store, UI state, action executor
-    │   │   ├── screens/            Today, Kitchen, Recipes, Receipt, Shopping, Chat, CookMode
+    │   │   ├── screens/            Today, Kitchen, Recipes, Receipt, Shopping, ChatScreen, CookMode
     │   │   ├── sheets/             bottom sheets (recipe, create, people, equipment…)
     │   │   ├── components/         Chat, AdaptPanel, PhotoStrip, VoiceAgent, Charts…
-    │   │   ├── lib/                api, store (IndexedDB), voice, wake, speechqueue, command
+    │   │   ├── lib/                api, store (IndexedDB), voice, wake, speechqueue, command, stockcmd
     │   │   └── styles/
     │   ├── public/                 icon, manifest, service worker
-    │   └── dist/                   production build
-    ├── shared/                     catalogue, seed recipes, corpus
-    ├── training/                   optional QLoRA fine-tuning
+    │   ├── dist/                   production build (npm run build)
+    │   └── node_modules/           npm install, not in git
+    ├── shared/                     catalogue, seed recipes, corpus (corpus not in git)
+    ├── training/                   optional LoRA / QLoRA fine-tuning
     ├── build_catalogue.py
     └── import_corpus.py
 ```
@@ -664,6 +720,8 @@ KitchenBuddy/
 | Microphone returns 502 | `python check_voice.py`; usually missing `ffmpeg` or `misaki` |
 | No voice but no error | check the log for which engine in the speaking chain answered |
 | Cooking mode slows down | prefetch racing your questions on one local model — `PREFETCH_ENABLED=false` |
+| Recipe opens with *"Check this one before you start"* | the model got it wrong twice; the box says what — try again, or use a larger model |
+| Saying "Bob" does nothing | look under the mic button: it says why (microphone refused, no internet for Chrome's recogniser, another tab holding the mic). Firefox has no recogniser |
 | Photos never appear | expected with `IMAGE_PROVIDER=none` — run `tools/make_photos.py` |
 | Receipt reading off | `brew install tesseract tesseract-lang` |
 | Voice models reload every few seconds | `--reload` restarts on every backend save — use `./run.sh --no-reload` |
@@ -674,7 +732,11 @@ KitchenBuddy/
 
 - **Receipt scanning in the app is simulated** — the server can read receipts, the
   Receipt tab doesn't call it yet.
-- **Wake word** uses the browser's cloud speech recogniser while armed.
+- **Wake word** is on by default and uses the browser's cloud speech recogniser
+  while armed.
+- **Small local models** follow the recipe rules most of the time, not always:
+  the checks catch wrong times and invented ingredients, not odd cooking choices
+  (five garlic cloves for two). A larger model writes better recipes.
 - **Storage is IndexedDB** — fine for one household, no sync between devices.
 - **A profile is a name plus what someone won't eat.** No health data, deliberately.
 - **Cooking mode walks the original steps**, not an equipment adaptation.

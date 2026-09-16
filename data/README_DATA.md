@@ -1,93 +1,102 @@
-Directory Structure
-Ensure your project directory is organized as follows:
+# Kitchen Data Engine (prototype)
 
-kitchen-assistant/
-├── kitchen_db/              # Generated ChromaDB storage (created on ingestion)
-├── ingest.py                # Dataset downloader and vector embedder script
-├── kitchen_data.py          # Session manager & TTS sanitizer classes
-├── kitchen_engine.py        # In-process RAG & search interface module
-├── test_engine.py           # Verification script
-└── requirements.txt         # Python dependencies
+A standalone retrieval engine for cooking data: it downloads recipe,
+substitution and nutrition datasets from Hugging Face, embeds them with
+[`BAAI/bge-small-en-v1.5`](https://huggingface.co/BAAI/bge-small-en-v1.5) and
+stores them in a local [ChromaDB](https://www.trychroma.com/) database you can
+search from Python.
 
+> **Not used by the Happy Bite app.** The app's recipe retrieval is
+> `happy-bite/backend/app/rag.py` (SQLite full-text search, no embeddings), and
+> nothing under `happy-bite/` imports this folder. It is a separate experiment
+> kept for reference.
 
-Prerequisites & Hardware Requirements
-OS: Linux (Ubuntu 22.04+ recommended), macOS, or Windows WSL2.
-Python: Version 3.10, 3.11, or 3.12.
-Storage: At least 15 GB of free disk space (for dataset downloading, embeddings, and vector store).
-Compute acceleration (Optional, but recommended):
-NVIDIA GPU: CUDA 11.8+ or 12.1+
-Apple Silicon: MPS (Metal Performance Shaders)
+## Files
 
-Step-by-Step Installation
-Step 1: Create a Python Virtual Environment
-Open a terminal in the project root directory and create a clean virtual environment:
+```
+data/
+├── README_DATA.md
+└── kitchen-data-engine/
+    ├── ingest.py           downloads the datasets and builds ./kitchen_db
+    ├── kitchen_engine.py   KitchenDataEngine: loads the database and searches it
+    ├── kitchen_data.py     RecipeSessionManager (step-by-step state) and TTSTextSanitizer
+    ├── requirements.txt    torch, chromadb, datasets, sentence-transformers, tqdm
+    ├── test_engine.py      empty for now: no tests written yet
+    └── kitchen_db/         created by ingest.py, not in git
+```
 
+## Requirements
+
+- Python 3.10, 3.11 or 3.12
+- About 15 GB of free disk space for the downloads, embeddings and database
+- Optional acceleration: an NVIDIA GPU (CUDA) or Apple Silicon (MPS). The
+  scripts pick `cuda`, then `mps`, then `cpu` on their own.
+
+## Setup
+
+Run everything from inside `data/kitchen-data-engine/`: the scripts read and
+write `./kitchen_db` relative to where you run them.
+
+macOS / Linux:
+
+```bash
+cd data/kitchen-data-engine
 python3 -m venv venv
 source venv/bin/activate
-
-
-(On Windows PowerShell, use .\venv\Scripts\Activate.ps1)
-
-Step 2: Install Dependencies
-Create a requirements.txt file with the following contents:
-
-torch
-chromadb
-datasets
-sentence-transformers
-tqdm
-
-
-Install the packages:
-
 pip install --upgrade pip
 pip install -r requirements.txt
+```
 
+Windows (PowerShell):
 
-Step 3: Populate Local Vector Database (ingest.py)
-Use ingest.py to pull datasets directly from Hugging Face, compute vector embeddings using BAAI/bge-small-en-v1.5, and persist them locally into ./kitchen_db.
+```powershell
+cd data\kitchen-data-engine
+py -3.12 -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install --upgrade pip
+pip install -r requirements.txt
+```
 
+## Build the database
+
+```bash
 python ingest.py
+```
 
+This creates three collections in `./kitchen_db`:
 
-Step 4: Core Engine Modules
-kitchen_data.py
-Contains helper logic for active cooking sessions and cleaning markdown before sending output to Text-to-Speech (TTS).
+| Collection | Source dataset | Rows |
+|---|---|---|
+| `substitutions` | `oraclemangle/historical-culinary-substitutions` (`substitutions.jsonl`) | all (~25k) |
+| `nutrition` | `omid5/usda-fdc-foods-cleaned` | first 50,000 |
+| `recipes` | `Kaiser1308/CookingRecipes` | first 50,000 |
 
+Expect a long first run: every row is downloaded and embedded.
 
-kitchen_engine.py
-Provides the primary interface for your team to load vector stores and search context directly in Python.
+## Use it from Python
 
-
-Step 5: Verification & Integration Test
-Use test_engine.py to verify that all components operate as expected on the host system:
-
-python test_engine.py
-
-
-Main Pipeline Integration Example
-Here is how other modules (such as STT, LLM generation, or TTS audio output) interact with KitchenDataEngine inside the primary execution loop:
-
-
-
-Python
+```python
 from kitchen_engine import KitchenDataEngine
 
-# Initialize once at system boot
-engine = KitchenDataEngine()
+engine = KitchenDataEngine()          # loads the embedder and ./kitchen_db once
 
-def process_user_voice_input(user_speech_text: str):
-    # 1. Query vector database for relevant domain context
-    rag_context = engine.search(user_speech_text)
-    
-    # 2. Inject context into LLM Prompt
-    system_prompt = f"Use this background culinary data to answer: {rag_context['documents']}"
-    raw_llm_response = my_llm_model.generate(system_prompt, user_speech_text)
-    
-    # 3. Sanitize markdown formatting before piping to Text-to-Speech
-    tts_ready_speech = engine.sanitize_for_tts(raw_llm_response)
-    
-    # 4. Play audio via TTS engine
-    my_tts_model.speak(tts_ready_speech)
+def answer(user_speech_text: str) -> None:
+    # 1. Retrieve context. The query picks the collection:
+    #    "calories/protein/fat/carbs/nutrition/macros" -> nutrition,
+    #    "substitute/instead/replace/alternative"      -> substitutions,
+    #    anything else                                 -> recipes.
+    context = engine.search(user_speech_text, top_k=2)
 
+    # 2. Give it to your model (my_llm_model is yours to supply).
+    system_prompt = f"Use this background culinary data to answer: {context['documents']}"
+    reply = my_llm_model.generate(system_prompt, user_speech_text)
 
+    # 3. Strip markdown and spell out fractions before speaking it.
+    my_tts_model.speak(engine.sanitize_for_tts(reply))
+```
+
+`search` returns `{"domain": "Recipe" | "Substitution" | "Nutrition", "documents": [...], "metadatas": [...]}`.
+
+`engine.session` is a `RecipeSessionManager` for walking through a recipe:
+`start_recipe({"title": ..., "ingredients": [...], "directions": [...]})`, `get_current_step()`, `next_step()`, `previous_step()`,
+`get_ingredients()`, `clear_session()`.

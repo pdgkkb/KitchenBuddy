@@ -27,7 +27,8 @@ from .actions import KITCHEN_TOOLS
 from .catalog import id_list, ids_budget, ingredients, recipe_book
 from .config import settings
 from .importer import ImportErrorPublic, fetch, plain_recipe, read_page
-from .recipes import RECIPE_IDEAS_SCHEMA, RECIPE_OPTIONS_SCHEMA, RECIPE_SCHEMA, clean_recipe
+from .recipes import (RECIPE_IDEAS_SCHEMA, RECIPE_OPTIONS_SCHEMA, RECIPE_SCHEMA, clean_recipe,
+                      recipe_problems, time_budget)
 
 router = APIRouter(prefix="/api")
 URL_RX = re.compile(r"https?://[^\s<>\"']+")
@@ -116,6 +117,10 @@ class GenerateIn(Known):
     # one that fits. "Surprise me" wants invention; "dinner from what's in the
     # fridge" does not.
     template: bool = True
+    # Minutes the dish has to fit in. Left out, it is read from the brief —
+    # "give me 15 minutes", "I'm drained" — and is 20 when the brief says
+    # nothing. See recipes.time_budget.
+    maxMinutes: int | None = Field(None, ge=5, le=600)
 
 
 class ImportIn(Known):
@@ -233,6 +238,11 @@ async def _write_recipe(body: GenerateIn, request: Request):
                       + (f", {s_.daysLeft} days left" if s_.daysLeft is not None and s_.daysLeft <= 3 else "") + ")"
                       for s_ in body.stock if s_.id in known and s_.qty is not None)
     user = body.brief or "Something good for tonight."
+    asked = " ".join([body.brief] + [m.content for m in body.conversation if m.role == "user"])
+    budget = time_budget(asked, body.maxMinutes)
+    in_kitchen = {s_.id for s_ in body.stock if s_.id in known and (s_.qty is None or s_.qty > 0)}
+    if budget:
+        user += f"\n\nIt has to be on the table in {budget} minutes."
     if body.conversation:
         talk = "\n".join(f"{m.role}: {m.content}" for m in body.conversation[-12:])
         user = f"Turn what we agreed in this conversation into the recipe.\n\n{talk}\n\nExtra wishes: {user}"
@@ -252,12 +262,19 @@ async def _write_recipe(body: GenerateIn, request: Request):
     #
     # Only for the full method. The two-idea pass is already cheap, and ideas
     # are the one place invention is the point.
+    #
+    # Not for a quick dinner, though. Measured with gemma-4-e2b and a demo
+    # fridge, a "15 minutes" request spent 48 s converting a corpus recipe that
+    # then failed the time check every time, before writing one in 20-25 s.
+    # Corpus methods are rarely that short, and a tired person waits for both.
     candidate = None
-    if not body.options and body.template and getattr(s, "template_enabled", True):
+    quick = budget is not None and budget <= 30
+    if not body.options and body.template and not quick and getattr(s, "template_enabled", True):
         candidate = await template.pick(
             rag, f"{user} {' '.join(stock_names)}", stock_names,
             floor=float(getattr(s, "template_floor", 0.72) or 0.72),
             candidates=int(getattr(s, "template_candidates", 8) or 8),
+            max_minutes=budget,
         )
 
     if candidate:
@@ -273,14 +290,17 @@ async def _write_recipe(body: GenerateIn, request: Request):
                                  template.user(candidate, body.brief, body.serves),
                                  RECIPE_SCHEMA, 1400)
             yield "stage", "check"
+            if isinstance(raw, dict):
+                raw["serves"] = body.serves      # scaled for the table asked for, whatever it says
             recipe = clean_recipe(raw, known, origin="template")
-            if recipe:
+            problems = recipe_problems(recipe, budget, in_kitchen) if recipe else ["nothing usable"]
+            if not problems:
                 recipe["basedOn"] = candidate["title"]
                 template.remember(candidate["title"], body.serves, recipe)
                 yield "done", {"recipe": recipe}
                 return
             print(f"template: {candidate['title']!r} converted into something that "
-                  "didn't hold together — writing one instead")
+                  f"didn't hold together ({'; '.join(problems)}) — writing one instead")
         except Exception as e:  # noqa: BLE001
             # Never fatal. A conversion that fails just means we write one, which
             # is what this endpoint did before templates existed.
@@ -296,9 +316,9 @@ async def _write_recipe(body: GenerateIn, request: Request):
     yield "stage", "ideas" if body.options else "method"
     try:
         if body.options:
-            raw = await llm.json(prompts.recipe_ideas_system(ids_for(known, keep_ids), stock, body.serves, retrieved), user, RECIPE_IDEAS_SCHEMA, 900)
+            raw = await llm.json(prompts.recipe_ideas_system(ids_for(known, keep_ids), stock, body.serves, retrieved, budget), user, RECIPE_IDEAS_SCHEMA, 900)
         else:
-            raw = await llm.json(prompts.recipe_system(ids_for(known, keep_ids), stock, body.serves, retrieved), user, RECIPE_SCHEMA, 1800)
+            raw = await llm.json(prompts.recipe_system(ids_for(known, keep_ids), stock, body.serves, retrieved, budget), user, RECIPE_SCHEMA, 1800)
     except Exception as e:  # noqa: BLE001
         # The server's own sentence, not just the exception's class name. A
         # local server that refuses a field answers 400 with a line naming it,
@@ -309,9 +329,44 @@ async def _write_recipe(body: GenerateIn, request: Request):
 
     if not body.options:
         yield "stage", "check"
+        # The prompt said who is eating; the model's "serves": 4 is the schema's
+        # habit, not a decision, and the app scales every amount from it.
+        if isinstance(raw, dict):
+            raw["serves"] = body.serves
         recipe = clean_recipe(raw, known, origin="assistant")
+        problems = recipe_problems(recipe, budget, in_kitchen) if recipe else ["it didn't hold together"]
+
+        # ONE second go, told exactly what was wrong. A small model that wrote
+        # four hours of boiled courgettes and a hummus nobody bought fixes most
+        # of it when handed the list; asked blind, it rolls the same dice again.
+        # Never a third: each go is a full recipe's wait at the stove.
+        if problems:
+            print("recipes: sending it back — " + "; ".join(problems))
+            yield "stage", "method"
+            try:
+                again = await llm.json(
+                    prompts.recipe_system(ids_for(known, keep_ids), stock, body.serves, retrieved, budget),
+                    user + "\n\nYour last attempt was rejected because " + "; ".join(problems)
+                    + ". Write it again with every one of those fixed.",
+                    RECIPE_SCHEMA, 1800)
+                yield "stage", "check"
+                if isinstance(again, dict):
+                    again["serves"] = body.serves
+                second = clean_recipe(again, known, origin="assistant")
+                if second:
+                    left = recipe_problems(second, budget, in_kitchen)
+                    if not recipe or len(left) <= len(problems):
+                        recipe, problems = second, left
+            except Exception as e:  # noqa: BLE001 — the first recipe still stands
+                print(f"recipes: second go failed ({type(e).__name__}: {str(e)[:160]})")
+
         if not recipe:
             raise HTTPException(502, "The assistant's recipe didn't hold together. Try again.")
+        if problems:
+            # Still wrong after being told. Handed over, but not quietly.
+            recipe["problems"] = problems
+        if budget:
+            recipe["budget"] = budget
         yield "done", {"recipe": recipe}
         return
 

@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../lib/api.js";
 import * as voice from "../lib/voice.js";
 import * as sq from "../lib/speechqueue.js";
+import { parseStock } from "../lib/stockcmd.js";
 import { Icon } from "./Icon.jsx";
 import { useKitchen } from "../state/kitchen.jsx";
 import { useUI } from "../state/ui.jsx";
@@ -48,6 +49,21 @@ export function useChat(context, greeting, onAction) {
     const clean = String(text || "").trim();
     if (!clean || busy) return "";
     const history = [...live.current, { id: "u" + Date.now(), role: "user", content: clean }];
+
+    /* Stock changes and stock questions are answered here, instantly, without
+       the server — see lib/stockcmd.js. The exchange still goes into the
+       thread, so the chef sees it in the history of the next real question. */
+    const local = parseStock(clean, k.stock);
+    if (local) {
+      const receipt = local.action && act.current ? act.current(local.action) : null;
+      setMessages([...history, { id: "a" + Date.now(), role: "assistant", content: local.say,
+                                 actions: receipt ? [receipt] : [] }]);
+      if (k.prefs.speakReplies) {
+        try { await voice.speak(local.say, server.voice); } catch { /* ignore */ }
+      }
+      return local.say;
+    }
+
     setMessages([...history, { id: "a" + Date.now(), role: "assistant", content: "", pending: true }]);
     setBusy(true);
     abort.current = new AbortController();
@@ -95,7 +111,7 @@ export function useChat(context, greeting, onAction) {
       try { await voice.speak(reply, server.voice); } catch { /* ignore */ }
     }
     return reply;
-  }, [busy, context, k.customs, k.prefs.speakReplies, server.voice]);
+  }, [busy, context, k.customs, k.stock, k.prefs.speakReplies, server.voice]);
 
   const stop = () => { abort.current?.abort(); sq.cancel(); voice.stopSpeaking(); };
   return { messages, send, busy, stop };

@@ -1,19 +1,48 @@
-# Ignore macOS metadata
+# ---------------------------------------------------------------- OS / editors
 .DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+*.swp
 
-# Ignore datasets and large data folders everywhere
-happy-bite/training/data/
-happy-bite/shared/*.jsonl
-happy-bite/backend/media/
-*.sqlite3
+# ---------------------------------------------------------------- secrets
+# backend/.env and training/.env hold API keys and machine-specific paths.
+.env
+.env.*
+!.env.example
 
+# ---------------------------------------------------------------- Node / frontend
+# Installed by `npm install`. Never commit it: it holds platform-specific
+# binaries (esbuild, rollup) that break on another OS.
+node_modules/
+.vite/
+npm-debug.log*
+*.log
 
-# Python cache & virtual environments
+# ---------------------------------------------------------------- Python
 **/__pycache__/
 *.py[cod]
 *$py.class
 .venv/
 venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# Environment files
-.env
+# ---------------------------------------------------------------- data and generated files
+# The 2.6 GB recipe corpus, downloaded separately (see README).
+happy-bite/shared/*.jsonl
+# Photos, the photo queue and the RAG index, all generated at run time.
+happy-bite/backend/media/
+*.sqlite3
+# Written by backend/check_voice.py.
+happy-bite/backend/voice-check.wav
+
+# Training datasets, adapters and exported models.
+happy-bite/training/data/
+happy-bite/training/out/
+happy-bite/training/Modelfile
+*.gguf
+
+# ChromaDB store written by data/kitchen-data-engine/ingest.py.
+kitchen_db/

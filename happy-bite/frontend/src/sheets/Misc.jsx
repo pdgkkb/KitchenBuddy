@@ -59,7 +59,7 @@ export function ServerSheet() {
   const { k, setPref } = useKitchen();
   const ui = useUI();
   const s = ui.server;
-  const phrase = s.wakeWord || "hey chef";
+  const phrase = wake.wakeLabel(s.wakeWord);
 
   /* What the wake word can do HERE, worked out before it is switched on.
      "It doesn't work" was, four times running, one of these three sentences
@@ -95,12 +95,13 @@ export function ServerSheet() {
       <h3 className="sub-head">Hands-free</h3>
       <p className="sub-note">With this on, the app listens for “{phrase}” whenever you aren't already talking to it, so you
         can start with flour on your hands. It keeps the microphone open to do that, and in Chrome the browser sends what it
-        hears to Google to recognise it — which is why it stays off until you ask. The mic button works either way, and
-        holding that button down turns this on and off without coming here.</p>
+        hears to Google to recognise it. It's on unless you switch it off here, or by holding the mic button down. Say
+        “{phrase}” and what you want in one go — “{phrase}, I'm drained, give me 15 minutes” — or “{phrase}”, wait for
+        the chime, then talk.</p>
       <div className="chips">
-        <button className={"chip" + (k.prefs.handsFree ? " is-on" : "")} aria-pressed={!!k.prefs.handsFree}
+        <button className={"chip" + (k.prefs.handsFree !== false ? " is-on" : "")} aria-pressed={k.prefs.handsFree !== false}
                 disabled={canWake !== "ok"}
-                onClick={() => setPref("handsFree", !k.prefs.handsFree)}>
+                onClick={() => setPref("handsFree", k.prefs.handsFree === false)}>
           <Icon name="mic" size={20} /> Listen for the wake word
         </button>
       </div>
@@ -110,7 +111,7 @@ export function ServerSheet() {
           <span>{wake.WAKE_REASON[canWake]}</span>
         </div>
       )}
-      {canWake === "ok" && k.prefs.handsFree && (
+      {canWake === "ok" && k.prefs.handsFree !== false && (
         <p className="sub-note" style={{ marginTop: 10 }}>
           It's on. Close this and say “{phrase}” — the mic button shows a ring while it's listening for you, and says
           underneath if something stops it.

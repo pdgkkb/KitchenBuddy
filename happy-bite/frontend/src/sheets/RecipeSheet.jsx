@@ -45,7 +45,16 @@ export function RecipeDetails({ recipe: r, serves, choices, setChoices }) {
         </div>
       )}
 
-      {r.contradictions?.length > 0 && (
+      {/* Sent back once with this list and still wrong. The server's words,
+          because they are the specific ones: "step 2 says 255 minutes". */}
+      {r.problems?.length > 0 && (
+        <div className="band is-warm">
+          <b>Check this one before you start</b>
+          <span>The assistant was asked to fix it and didn't manage: {r.problems.join("; ")}.</span>
+        </div>
+      )}
+
+      {!r.problems?.length && r.contradictions?.length > 0 && (
         <div className="band is-warm">
           <b>Read the method twice</b>
           <span>It mentions something this recipe doesn't contain — {r.contradictions.join(", ")}.

@@ -107,3 +107,37 @@
   .cook-step-heading { margin-top: 38px; }
   .cook-now li { font-size: 1.2rem; }
 }
+
+/* The gap in a timed step, and the one job that fits it (core/window.js).
+   Quieter than "Add now": it's a suggestion for the wait, not the step. */
+.cook-gap {
+  margin: 14px 0 8px;
+  padding: 14px 18px;
+  border-radius: var(--r-lg, 18px);
+  background: var(--mint-wash, rgba(95, 199, 150, 0.12));
+  border: 1px solid var(--line, rgba(0, 0, 0, 0.07));
+}
+
+.cook-gap-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mint-deep, #1f7a56);
+}
+
+.cook-gap-task {
+  margin: 0;
+  font-size: 1.12rem;
+  line-height: 1.35;
+}
+
+.cook-gap-then {
+  margin: 4px 0 0;
+  font-size: 0.9rem;
+  color: var(--ink-soft, rgba(0, 0, 0, 0.6));
+}

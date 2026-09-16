@@ -2,11 +2,19 @@
 
    This screen is about ONE step at a time, not a chat log. The step is the
    headline; heat and what-to-watch-for are the key points beside it. With local
-   voice on it listens the whole time: say "next"/"back"/"repeat", "start a
-   timer", or ask a question and it answers out loud in a sentence or two — the
-   answer shows as a short caption under the step, not a scrolling transcript.
+   voice on, it waits for its name — "Bob" (WAKE_WORD in backend/.env) — and
+   only then listens: "Bob, next", "Bob, start a timer", or "Bob" on its own, a
+   beep, then the question. It answers out loud in a sentence or two — the
+   answer shows as a short caption under the step, not a scrolling transcript —
+   and goes back to waiting for its name.
 
-   "stop chef" — stop talking (keeps listening).
+   WHY IT WAITS FOR A NAME: it used to act on everything it heard. Talking to
+   someone else in the kitchen, or the radio, moved the step on or sent a
+   "question" to the model — a slow, busy GPU for something nobody asked. It
+   still transcribes what it hears, locally, to find the name; everything
+   without it is dropped before the model ever sees it.
+
+   "Bob, stop chef" — stop talking (keeps listening).
    "stop timer" — cancel a running timer.
    "stop cooking" — end the session.
    The ✕ minimises to a dock you tap or reach with "go back to the cooking
@@ -42,8 +50,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as E from "../core/engine.js";
+import { idleWindow, windowLabel } from "../core/window.js";
 import * as api from "../lib/api.js";
 import * as voice from "../lib/voice.js";
+import * as wake from "../lib/wake.js";
 import { parseCook } from "../lib/command.js";
 import { useKitchen, stockForServer } from "../state/kitchen.jsx";
 import { useUI } from "../state/ui.jsx";
@@ -63,7 +73,7 @@ export default function CookMode() {
   const [pictures, setPictures] = useState({});
   const [drawing, setDrawing] = useState(false);
   const [live, setLive] = useState(false);               // hands-free listening on
-  const [vstate, setVstate] = useState("");              // listening | thinking | speaking
+  const [vstate, setVstate] = useState("");              // waiting | listening | thinking | speaking
   const [answer, setAnswer] = useState("");              // the chef's latest short reply
   const [instant, setInstant] = useState(false);         // that answer was already written
   const [typed, setTyped] = useState("");
@@ -71,10 +81,26 @@ export default function CookMode() {
   const total = recipe.steps.length;
   const last = i === total - 1;
 
+  /* The gap in this step and the one job that fits it (core/window.js).
+     Jobs already handed out are remembered for the session, so the knife is
+     rinsed once, not on every step. A step keeps its job while you're on it. */
+  const givenRef = useRef({});                          // step index -> key
+  const gap = useMemo(() => {
+    const given = givenRef.current;
+    const done = Object.entries(given).filter(([n]) => Number(n) !== i).map(([, key]) => key);
+    const w = idleWindow(recipe, i, done);
+    if (w) given[i] = w.key;
+    return w;
+  }, [recipe, i]);
+  const gapRef = useRef(gap); gapRef.current = gap;
+
   const iRef = useRef(0); iRef.current = i;
   const liveRef = useRef(false);
   const listenRef = useRef(null);
   const useServer = ui.server.voice;
+  const wakeWord = ui.server.wakeWord || wake.DEFAULT_WAKE;
+  const wakeWordRef = useRef(wakeWord); wakeWordRef.current = wakeWord;
+  const wakeName = wake.wakeLabel(wakeWord);
 
   const context = useCallback(() => ({
     mode: "cooking", recipe, step: iRef.current, serves, stock: stockForServer(k.stock),
@@ -127,15 +153,40 @@ export default function CookMode() {
 
   const speak = (text) => voice.speak(text, useServer);
 
-  const hearNext = useCallback(() => {
+  /* The timer is the moment the waiting starts, so it is the moment to hear
+     what fits in the wait: "You have a 90-second window. Rinse the knife and
+     the cutting board." Always spoken: with the local voice (Kokoro) when it
+     runs, and the browser's own voice when it doesn't. */
+  const startStepTimer = () => {
+    ui.startTimer(step.minutes, step.do.slice(0, 40));
+    if (gap) speak(gap.say);
+  };
+
+  /* One turn. `awake` is false while waiting for the name, true for the one
+     turn after a bare "Bob". Every path out of a handled command calls
+     hearNext() with no argument, which is back to waiting. */
+  const hearNext = useCallback((awake = false) => {
     if (!liveRef.current) return;
-    setVstate("listening");
+    setVstate(awake ? "listening" : "waiting");
     listenRef.current = voice.listenVAD({
+      // Waiting: a name is short, so a short pause ends the clip and nothing is
+      // lost by starting another. Awake: a normal pause, and a few seconds to
+      // start talking before it goes back to waiting.
+      silence: awake ? 1000 : 700,
+      maxWait: awake ? 7000 : 9000,
       onText: async (raw) => {
         listenRef.current = null;
         if (!liveRef.current) return;
-        const said = (raw || "").trim();
+        let said = (raw || "").trim();
         if (!said) return hearNext();
+
+        const rest = wake.afterWake(wakeWordRef.current, said);
+        if (rest === null && !awake) return hearNext();        // not said to Bob — ignore it
+        if (rest === "") {                                     // just the name: beep, then listen
+          await voice.chime();
+          return hearNext(true);
+        }
+        if (rest) said = rest;                                  // "Bob, next step" in one breath
 
         const c = parseCook(said);
         if (c) {
@@ -151,8 +202,9 @@ export default function CookMode() {
           else if (c.cmd === "ingredients") { await speak(ingredientsLine()); }
           else if (c.cmd === "timer")  {
             const s = recipe.steps[iRef.current];
-            if (c.minutes) { ui.startTimer(c.minutes, s.do.slice(0, 40)); await speak(`Timer on for ${spokenMinutes(c.minutes)}.`); }
-            else if (s.minutes >= 3) { ui.startTimer(s.minutes, s.do.slice(0, 40)); await speak(`Timer on for ${s.minutes} minutes.`); }
+            const also = gapRef.current ? ` ${gapRef.current.say}` : "";
+            if (c.minutes) { ui.startTimer(c.minutes, s.do.slice(0, 40)); await speak(`Timer on for ${spokenMinutes(c.minutes)}.${also}`); }
+            else if (s.minutes >= 3) { ui.startTimer(s.minutes, s.do.slice(0, 40)); await speak(`Timer on for ${s.minutes} minutes.${also}`); }
             else await speak("This step is quick — you watch it rather than time it. Tell me how long if you want a timer.");
           }
           return hearNext();
@@ -230,12 +282,12 @@ export default function CookMode() {
     const parked = await api.quickAnswer(recipe.id, iRef.current, q);
     if (parked?.answer) {
       say(parked.answer, true);
-      setVstate(live ? "listening" : "");
+      setVstate(live ? "waiting" : "");
       return;
     }
     const reply = await chat.send(q);
     say(reply || "");
-    setVstate(live ? "listening" : "");
+    setVstate(live ? "waiting" : "");
   };
 
   const picture = async () => {
@@ -248,7 +300,10 @@ export default function CookMode() {
   };
 
   const inKitchen = useMemo(() => new Map(k.stock.map(a => [a.id, a])), [k.stock]);
-  const stateLabel = { listening: "Listening…", thinking: "Thinking…", speaking: "Speaking…" }[vstate];
+  const stateLabel = {
+    waiting: `Say “${wakeName}” — then “next”, “repeat”, or ask me anything.`,
+    listening: "Listening…", thinking: "Thinking…", speaking: "Speaking…",
+  }[vstate];
   const bgAnim = k.prefs.bgAnim !== false;
   const mood = moodFor(recipe.cuisine);
 
@@ -286,7 +341,7 @@ export default function CookMode() {
       {live && (
         <div className={"cook-live is-" + (vstate || "idle")} role="status" aria-live="polite">
           <span className="cook-live-dot" />
-          <span>{stateLabel || "Say “next”, “repeat”, or ask me anything. “Stop cooking” to end."}</span>
+          <span>{stateLabel || `Say “${wakeName}”, then “next”, “repeat”, or ask me anything. “${wakeName}, stop cooking” to end.`}</span>
         </div>
       )}
 
@@ -358,6 +413,16 @@ export default function CookMode() {
           {step.why && <p className="cook-why">{step.why}</p>}
         </div>
 
+        {/* Said out loud when the timer starts — that's the moment the waiting
+            begins. Shown from the moment the step is, so it can be planned. */}
+        {gap && (
+          <div className="cook-gap" role="note">
+            <p className="cook-gap-label"><Icon name="clock" size={16} /> {windowLabel(gap.seconds)} window</p>
+            <p className="cook-gap-task">{gap.task}</p>
+            {gap.active && <p className="cook-gap-then">Then back to the pan for a stir.</p>}
+          </div>
+        )}
+
         {pictures[i] && <img className="cook-pic" src={pictures[i]} alt={`What “${step.do}” should look like`}
                               width="512" height="512" decoding="async" />}
 
@@ -372,7 +437,7 @@ export default function CookMode() {
 
         <div className="cook-tools">
           {step.minutes >= 3 && (
-            <button className="btn btn-small btn-ghost" onClick={() => ui.startTimer(step.minutes, step.do.slice(0, 40))}>
+            <button className="btn btn-small btn-ghost" onClick={startStepTimer}>
               <Icon name="clock" size={20} /> {step.minutes} min timer
             </button>
           )}

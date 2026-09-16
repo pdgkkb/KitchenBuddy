@@ -17,6 +17,7 @@
 */
 
 import { ref } from "../core/engine.js";
+import { parseStock } from "./stockcmd.js";
 
 const norm = (s) => String(s || "").toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
 
@@ -78,22 +79,6 @@ function readExpiring(stock) {
   return `Use ${listWords(say)}.`;
 }
 
-/* "how much milk do I have", "do I have any eggs" -> one item, in human terms
-   (a count if it's countable, otherwise a rough sense — never grams). */
-function readOneItem(t, stock) {
-  const items = (stock || []).filter(s => s.qty > 0);
-  const hit = items.find(s => {
-    const name = norm(ref(s.id)?.name || s.id);
-    return name && (t.includes(name) || (name.endsWith("s") && t.includes(name.slice(0, -1))));
-  });
-  if (!hit) return null;                               // unknown item — let the model try
-  const name = (ref(hit.id)?.name || hit.id).toLowerCase();
-  const unit = hit.unit || ref(hit.id)?.unit || "g";
-  if (unit === "u") return `You've got ${Math.round(hit.qty)} ${name}.`;
-  const lots = unit === "l" ? hit.qty >= 1 : hit.qty >= 300;   // ~a litre / ~300 g
-  return `You've got ${lots ? "plenty of" : "a little"} ${name}.`;
-}
-
 function matchRecipe(t, recipes) {
   if (!recipes || !recipes.length) return null;
   const sorted = [...recipes].sort((a, b) => (b.name || "").length - (a.name || "").length);
@@ -109,6 +94,20 @@ export function parse(text, ctx = {}) {
   const { stock, recipes, openRecipeId } = Array.isArray(ctx) ? { stock: ctx } : ctx;
   const t = norm(text);
   if (!t) return null;
+
+  // Stock: "add 200 g of chicken", "what meat do we have", "how much milk is
+  // left". See stockcmd.js for what each one says back.
+  const stockAnswer = parseStock(text, stock);
+  if (stockAnswer) return stockAnswer;
+
+  // "I'm drained. Give me 15 minutes." — the whole request, with no dish named.
+  // No questions back: one recipe, from the kitchen, in the time they gave.
+  const tired = /\b(drained|exhausted|knackered|shattered|wiped out|destroyed|no energy|so tired|too tired|i m tired|im tired)\b/.test(t);
+  const mins = t.match(/\b(\d{1,3}) ?(?:min|mins|minutes)\b/);
+  if (!/\b(timer|remind|alarm)\b/.test(t) &&
+      (tired || (mins && /\b(give me|i have|i ve got|ive got|i got|only have|dinner in|something in|meal in|ready in)\b/.test(t)))) {
+    return { action: { kind: "generate_recipe", brief: text.trim(), maxMinutes: mins ? Number(mins[1]) : 15 } };
+  }
 
   // Broad recipe requests are actions, not questions. The creator has the
   // live kitchen inventory and can decide the details without asking.
@@ -162,10 +161,7 @@ export function parse(text, ctx = {}) {
   // reads it rather than opening the tab.
   if (READ_VERB.test(t) && !NAV_VERB.test(t)) {
     if (EXP_NOUN.test(t)) return { say: readExpiring(stock) };
-    if (INV_NOUN.test(t)) {
-      const one = /\bany\b|\bhow much\b|\bhow many\b|\bdo i have\b|\bhave i got\b/.test(t) ? readOneItem(t, stock) : null;
-      return { say: one || readInventory(stock) };
-    }
+    if (INV_NOUN.test(t)) return { say: readInventory(stock) };
   }
 
   // Navigation — needs a verb ("go to…", "show me…") or a trailing "…tab".

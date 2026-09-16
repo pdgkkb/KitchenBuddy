@@ -19,7 +19,7 @@ import Waiting, { METHOD_STAGES, LINK_STAGES } from "../components/Waiting.jsx";
 import { RecipeDetails, RecipeMethod, PhotoButton } from "./RecipeSheet.jsx";
 import "../styles/draft.css";
 
-export function CreateSheet({ options: initialOptions = null, autoGenerate = false, initialBrief = "" }) {
+export function CreateSheet({ options: initialOptions = null, autoGenerate = false, initialBrief = "", maxMinutes = null }) {
   const { k } = useKitchen();
   const ui = useUI();
   const [brief, setBrief] = useState(initialBrief);
@@ -84,7 +84,10 @@ export function CreateSheet({ options: initialOptions = null, autoGenerate = fal
       const { recipe } = await api.generateRecipeStream({
         options: false,
         brief: brief || "Something good for tonight", stock: stockForServer(k.stock),
-        serves: k.diners.length || 4, custom: k.customs
+        serves: k.diners.length || 4, custom: k.customs,
+        // Only when the brief is still the one it came with. Edited, the
+        // server reads the time out of the new words instead.
+        ...(maxMinutes && brief === initialBrief ? { maxMinutes } : {})
       }, setStage);
       setBusy(false);
       inFlightRef.current = false;
@@ -149,7 +152,7 @@ export function CreateSheet({ options: initialOptions = null, autoGenerate = fal
                 placeholder={on ? (soon.length ? `Something warm with the ${soon[0]} before it goes` : "Something comforting, 30 minutes") : "Name it, or leave blank"} />
       {on && (
         <div className="chips" style={{ marginTop: 12 }}>
-          {["Impress guests", "Kids will eat it", "One pan", "Bold and spicy"].map(s => (
+          {["15 minutes", "One pan", "Kids will eat it", "Take our time", "Bold and spicy"].map(s => (
             <button key={s} className="chip chip-sm" onClick={() => setBrief(b => (b ? b + ", " : "") + s.toLowerCase())}>{s}</button>
           ))}
         </div>

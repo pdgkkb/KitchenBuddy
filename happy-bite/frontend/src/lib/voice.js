@@ -98,6 +98,37 @@ export function stopSpeaking() {
   if (currentResolve) { const r = currentResolve; currentResolve = null; r(); }
 }
 
+/* Two short rising notes: "I heard my name, go on." A spoken "yes?" would be
+   friendlier and a second late — Kokoro has to write it first — and the first
+   word of the command goes into that second. Resolves when the sound is over,
+   so the microphone isn't recording its own beep. One AudioContext, kept:
+   browsers allow only a few. */
+let chimeCtx = null;
+export function chime() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return Promise.resolve();
+    chimeCtx = chimeCtx || new AC();
+    const ctx = chimeCtx;
+    if (ctx.state === "suspended") ctx.resume();
+    const t = ctx.currentTime + 0.02;
+    [[660, 0], [880, 0.11]].forEach(([freq, at]) => {
+      const osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, t + at);
+      gain.gain.exponentialRampToValueAtTime(0.25, t + at + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + at + 0.1);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t + at);
+      osc.stop(t + at + 0.11);
+    });
+    return new Promise(resolve => setTimeout(resolve, 300));
+  } catch {
+    return Promise.resolve();
+  }
+}
+
 /* Returns a Promise that resolves when the audio finishes (or is stopped). */
 export function speak(text, useServer) {
   const clean = String(text).replace(/[*_#`>]/g, "").trim();

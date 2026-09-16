@@ -16,6 +16,7 @@ import { Icon } from "../components/Icon.jsx";
 import { Ring, RingStack, SparkBars, WeekStrip } from "../components/Charts.jsx";
 
 export const nameOf = (id) => E.ref(id).name || id;
+const DRAINED = "I'm drained. Give me 15 minutes.";
 export const listOf = (ids) => ids.map(nameOf).join(", ");
 export const effortName = (n) => (COMPLEXITY.find(c => c.level === n) || {}).name || "";
 
@@ -44,6 +45,18 @@ export default function Today() {
   const summary = useMemo(() => E.kitchenSummary({ ...k, shopping }), [k, shopping]);
 
   const reset = () => { setSurprised(null); setAllowIncomplete(false); };
+
+  /* The whole evening in one tap: no questions, one dish, from what's here,
+     on the table in fifteen minutes. With the assistant off it can't write
+     one, so it does the next best thing — the book, under fifteen minutes. */
+  const drained = () => {
+    if (ui.server.recipes) {
+      ui.openSheet("create", { autoGenerate: true, initialBrief: DRAINED, maxMinutes: 15 });
+      return;
+    }
+    reset();
+    setAsk({ filters: { maxMinutes: 15, maxComplexity: 1 }, avoid: [], understood: ["under 15 min", "easy"], source: "local" });
+  };
 
   async function applyAsk(text) {
     if (!text.trim()) return;
@@ -91,6 +104,10 @@ export default function Today() {
       </header>
 
       <WeekStrip week={summary.week} />
+
+      <button className="btn btn-primary drained-btn" onClick={drained}>
+        <Icon name="clock" size={22} /> {DRAINED}
+      </button>
 
       <div className="askbar">
         <input className="askbar-input" value={askText} placeholder="What do you feel like eating?"

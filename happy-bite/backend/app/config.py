@@ -163,8 +163,11 @@ class Settings(BaseSettings):
     piper_voice: str = ""                            # path to a Piper .onnx voice (only if tts_engine=piper)
     piper_config: str = ""                           # path to its .onnx.json (default: <voice>.json)
 
-    # Wake word (browser side reads this from /api/status)
-    wake_word: str = "hey chef"
+    # Wake word (browser side reads this from /api/status). Cooking mode only
+    # acts on what is said after it; the app-wide hands-free button waits for it.
+    # A short name works best when the recogniser has a sound-alike list for it
+    # — see SOUNDS_LIKE in frontend/src/lib/wake.js.
+    wake_word: str = "bob"
 
     # Answers written before you ask them (see app/prefetch.py).
     #

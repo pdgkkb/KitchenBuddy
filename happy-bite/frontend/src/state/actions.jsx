@@ -73,7 +73,8 @@ export function useApplyAction() {
       }
       case "generate_recipe":
         ui.setTab("recipes");
-        ui.openSheet("create", { autoGenerate: true, initialBrief: action.brief || "Something good with what is in the kitchen" });
+        ui.openSheet("create", { autoGenerate: true, initialBrief: action.brief || "Something good with what is in the kitchen",
+                                 maxMinutes: action.maxMinutes || null });
         return { text: "Checking the kitchen and creating recipe options" };
       case "open_recipe": {
         const r = kitchen.k.book.find(x => x.id === action.id);
