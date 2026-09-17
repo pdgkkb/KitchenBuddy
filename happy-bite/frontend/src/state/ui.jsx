@@ -22,6 +22,7 @@ export function UIProvider({ children }) {
   const [featured, setFeatured] = useState(null);    // id of tonight's suggested dish
   const [chat, setChat] = useState(null);            // { seed }
   const [server, setServer] = useState(api.OFF);
+  const [receiptCamera, setReceiptCamera] = useState(false);   // "Scan a receipt": open the camera on arrival
   const toastTimer = useRef();
 
   /* Polled every 5 s, but the answer is almost always the same — and a new
@@ -51,9 +52,11 @@ export function UIProvider({ children }) {
   }, []);
 
   const value = useMemo(() => ({
-    tab, sheet, toast, timer, cooking, cookMin, chat, server, featured,
+    tab, sheet, toast, timer, cooking, cookMin, chat, server, featured, receiptCamera,
     setFeatured,
     setTab: (t) => { setTabRaw(t); window.scrollTo?.(0, 0); },
+    scanReceipt: () => { setSheet(null); setReceiptCamera(true); setTabRaw("receipt"); window.scrollTo?.(0, 0); },
+    receiptCameraOpened: () => setReceiptCamera(false),
     openSheet: (type, props = {}) => setSheet({ type, props }),
     closeSheet: () => setSheet(null),
     say,
@@ -66,7 +69,7 @@ export function UIProvider({ children }) {
     openChat: (seed) => { setSheet(null); setChat({ seed }); },
     closeChat: () => setChat(null),
     refreshServer
-  }), [tab, sheet, toast, timer, cooking, cookMin, chat, server, featured, say, refreshServer]);
+  }), [tab, sheet, toast, timer, cooking, cookMin, chat, server, featured, receiptCamera, say, refreshServer]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -34,6 +34,7 @@ from .imagestore import RecipeImages
 from .prefetch import Prefetcher
 from .providers.llm import make_llm
 from .providers.media import make_images_checked, make_speech_checked
+from .products import ProductIndex
 from .rag import RecipeRetriever
 
 
@@ -56,6 +57,9 @@ async def lifespan(app: FastAPI):
     app.state.rag = RecipeRetriever(s.rag_source_path, s.rag_index_path,
                                     s.rag_enabled, s.rag_top_k)
     await app.state.rag.start()
+    app.state.products = ProductIndex(s.products_index_path)
+    print("receipts:", "matched against Open Food Facts" if app.state.products.available
+          else app.state.products.why)
 
     print("Happy Bite server —",
           f"chat: {app.state.llm.name if app.state.llm else 'off'},",

@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../lib/api.js";
 import * as voice from "../lib/voice.js";
+import { raceStop } from "../lib/stopword.js";
 import { useKitchen, stockForServer } from "../state/kitchen.jsx";
 import { useUI } from "../state/ui.jsx";
 import { useApplyAction } from "../state/actions.jsx";
@@ -50,7 +51,20 @@ export default function ChatScreen() {
         const said = (text || "").trim();
         if (!said) { turn(); return; }                 // heard nothing — keep listening
         setVState("thinking");
-        await sendRef.current(said);                    // streams the reply, then speaks it (Kokoro)
+        // Streams the reply, then speaks it (Kokoro) — unless "Bob, stop" cuts
+        // it off (lib/stopword.js), in which case it's straight back to you.
+        const out = await raceStop({
+          wakeWord: ui.server.wakeWord,
+          listen: (t) => voice.listenVAD({ ...t, silence: 600, maxWait: 120000, maxLen: 4000 }),
+          work: () => sendRef.current(said),
+        });
+        if (out.stopped) {
+          chat.stop();
+          await out.settled;
+          if (!convoRef.current) return;
+          if (out.rest) { setVState("thinking"); await sendRef.current(out.rest); }
+          else await voice.chime();
+        }
         if (convoRef.current) turn();                   // your turn again
       },
       onError: (m) => { ui.say(m); if (convoRef.current) setTimeout(turn, 800); },

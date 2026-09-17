@@ -37,6 +37,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as voice from "../lib/voice.js";
 import * as wake from "../lib/wake.js";
 import { parse as parseCommand } from "../lib/command.js";
+import { raceStop } from "../lib/stopword.js";
 import { useKitchen, stockForServer } from "../state/kitchen.jsx";
 import { useUI } from "../state/ui.jsx";
 import { useApplyAction } from "../state/actions.jsx";
@@ -93,6 +94,7 @@ export default function VoiceAgent() {
   );
   const chat = useChat(context, null, applyAction);
   const sendRef = useRef(chat.send); sendRef.current = chat.send;
+  const stopChatRef = useRef(chat.stop); stopChatRef.current = chat.stop;
   const stockRef = useRef(k.stock); stockRef.current = k.stock;
   const bookRef = useRef(k.book); bookRef.current = k.book;
   const applyRef = useRef(applyAction); applyRef.current = applyAction;
@@ -168,10 +170,31 @@ export default function VoiceAgent() {
         uiRef.current.say("The chef server is offline. Start it, then try again.");
         return again(500);
       }
-      const reply = await sendRef.current(said);
-      if (reply && !speaksAlreadyRef.current) {
-        setVstate("speaking");
-        try { await voice.speak(reply, false); } catch { /* */ }
+      /* The answer can be cut off with "Bob, stop" (lib/stopword.js) — while
+         it thinks and while it talks. "Bob, stop, what about pasta" goes
+         straight on to the new question. */
+      let cut = false;
+      const out = await raceStop({
+        wakeWord: uiRef.current.server.wakeWord,
+        listen: (turn) => onServer
+          ? voice.listenVAD({ ...turn, silence: 600, maxWait: 120000, maxLen: 4000 })
+          : browserTurn(turn),
+        work: async () => {
+          const reply = await sendRef.current(said);
+          if (reply && !cut && !speaksAlreadyRef.current) {
+            setVstate("speaking");
+            try { await voice.speak(reply, false); } catch { /* */ }
+          }
+        },
+      });
+      if (!activeRef.current) return;
+      if (out.stopped) {
+        cut = true;
+        stopChatRef.current();
+        await out.settled;
+        if (!activeRef.current) return;
+        if (out.rest) return handle(out.rest);
+        await voice.chime();
       }
       again(0);
     };
@@ -245,7 +268,8 @@ export default function VoiceAgent() {
 
   if (hidden) return null;
 
-  const label = { listening: "Listening…", thinking: "Thinking…", speaking: "Speaking…" }[vstate];
+  const label = { listening: "Listening…", speaking: "Speaking…",
+                  thinking: `Thinking… say “${wake.wakeLabel(ui.server.wakeWord)}, stop” to cancel` }[vstate];
 
   /* Long press = hands-free on or off. The switch used to live only in a
      settings sheet, which for a feature people describe as "not working" is

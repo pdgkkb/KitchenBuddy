@@ -1,0 +1,41 @@
+/* Recipes for the engine tests only — never loaded by the app, whose book
+   starts empty. Small on purpose: enough to test proposing, exclusions,
+   drawing three, history and portions against the starting stock. */
+
+const step = (d, minutes, extra = {}) => ({ do: d, minutes, ...extra });
+
+export const RECIPES = [
+  { id: "pasta-tomato", name: "Tomato and parmesan pasta", minutes: 25, stars: 1, complexity: 1, types: ["lunch", "dinner"],
+    cuisine: "Italian", serves: 4,
+    needs: [{ id: "pasta", qty: 400 }, { id: "tomato", qty: 400 }, { id: "garlic", qty: 1 }, { id: "parmesan", qty: 60 },
+            { id: "oliveoil", qty: 3, flexible: true }],
+    seasoning: [{ id: "salt", qty: 12, essential: true }, { id: "oregano", qty: 2 }],
+    steps: [step("Boil the pasta in salted water", 10, { heat: "High" }), step("Warm the tomatoes and garlic in oil", 12, { heat: "Medium" }),
+            step("Toss the pasta through the sauce and serve with parmesan", 2)] },
+  { id: "gratin", name: "Courgette gratin", minutes: 35, stars: 2, complexity: 2, types: ["dinner"], cuisine: "French", serves: 4,
+    needs: [{ id: "courgette", qty: 600 }, { id: "goat", qty: 150 }, { id: "cream", qty: 20 }, { id: "egg", qty: 2 }],
+    seasoning: [{ id: "salt", qty: 4, essential: true }],
+    steps: [step("Turn the oven on to 200 °C", 1, { heat: "Oven 200 °C" }), step("Bake the courgettes under the custard", 30, { heat: "Oven 200 °C" }),
+            step("Serve from the dish", 1)] },
+  { id: "tortilla", name: "Potato tortilla", minutes: 40, stars: 2.5, complexity: 2, types: ["lunch", "dinner"], cuisine: "Spanish", serves: 4,
+    needs: [{ id: "egg", qty: 6 }, { id: "potato", qty: 600 }, { id: "onion", qty: 1 }, { id: "oliveoil", qty: 10, flexible: true }],
+    seasoning: [{ id: "salt", qty: 5, essential: true }],
+    steps: [step("Cook the potato and onion slowly in oil", 20, { heat: "Low" }), step("Cook with the eggs", 15, { heat: "Medium" }),
+            step("Cut into wedges", 2)] },
+  { id: "hummus", name: "Hummus", minutes: 12, stars: 1, complexity: 1, types: ["snack"], cuisine: "Levantine", serves: 4,
+    needs: [{ id: "chickpea", qty: 400 }, { id: "lemon", qty: 1 }, { id: "garlic", qty: 1 }, { id: "oliveoil", qty: 4, flexible: true }],
+    seasoning: [{ id: "salt", qty: 4, essential: true }],
+    steps: [step("Blend everything smooth", 10), step("Spread it out and drizzle with oil", 2)] },
+  { id: "porridge", name: "Oat porridge", minutes: 10, stars: 0.5, complexity: 1, types: ["breakfast"], cuisine: "British", serves: 4,
+    needs: [{ id: "oats", qty: 160 }, { id: "milk", qty: 0.7 }, { id: "banana", qty: 2 }],
+    steps: [step("Bring the oats and milk up slowly, stirring", 8, { heat: "Medium-low" }), step("Top with banana", 2)] },
+  { id: "yoghurt-bowl", name: "Yoghurt bowl", minutes: 5, stars: 0.5, complexity: 1, types: ["breakfast"], cuisine: "Everyday", serves: 4,
+    needs: [{ id: "yoghurt", qty: 400 }, { id: "oats", qty: 80 }, { id: "banana", qty: 2 }],
+    steps: [step("Toast the oats", 3, { heat: "Medium" }), step("Spoon over the yoghurt with banana", 2)] },
+  { id: "pork-braise", name: "Braised pork with rice", minutes: 75, stars: 3, complexity: 2, types: ["dinner"], cuisine: "Vietnamese", serves: 4,
+    needs: [{ id: "pork", qty: 600 }, { id: "rice", qty: 300 }],
+    steps: [step("Brown the pork", 12, { heat: "High" }), step("Braise with a lid on", 50, { heat: "Low" }), step("Serve over the rice", 3)] },
+  { id: "steak", name: "Steak with potatoes", minutes: 25, stars: 2.5, complexity: 2, types: ["dinner"], cuisine: "French", serves: 4,
+    needs: [{ id: "beef", qty: 600 }, { id: "potato", qty: 700 }],
+    steps: [step("Boil the potatoes", 18, { heat: "High" }), step("Sear the steaks", 5, { heat: "High" }), step("Serve on the potatoes", 1)] },
+];

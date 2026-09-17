@@ -134,7 +134,8 @@ async def cook_quick(body: QuickIn, request: Request):
 @router.post("/receipt/read")
 async def receipt_read(request: Request,
                        photo: UploadFile = File(...),
-                       custom: str = Form("{}")):
+                       custom: str = Form("{}"),
+                       corrections: str = Form("{}")):
     """A photograph of a till receipt -> the same shape the sample receipt has,
     so it drops straight into the screen that already exists for correcting it."""
     data = await photo.read()
@@ -148,11 +149,22 @@ async def receipt_read(request: Request,
         extra = extra if isinstance(extra, dict) else {}
     except ValueError:
         extra = {}
+    # The household's hand corrections, {receipt line: id, or null for "not
+    # food"}. They live in the browser; the server only reads them.
+    try:
+        fixed = json.loads(corrections or "{}")
+        fixed = dict(list(fixed.items())[-2000:]) if isinstance(fixed, dict) else {}
+    except ValueError:
+        fixed = {}
 
     s = settings()
+    budget = int(getattr(s, "llm_ids_chars", 0) or 0) or ids_budget(
+        await context_window.refresh(s), float(getattr(s, "llm_reserve", 0.35) or 0.35))
     try:
         return await read_receipt(data, svc(request, "llm"), ingredients(extra),
-                                  getattr(s, "ocr_languages", "fra+eng"))
+                                  getattr(s, "ocr_languages", "fra+eng"),
+                                  products=svc(request, "products"), corrections=fixed,
+                                  ids_limit=budget)
     except ReceiptError as e:
         raise HTTPException(422, str(e)) from None
     except Exception as e:  # noqa: BLE001

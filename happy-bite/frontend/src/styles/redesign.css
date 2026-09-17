@@ -323,6 +323,7 @@ body::after {
   border: 1px solid rgba(255,255,255,.6); }
 .kpt-heat { color: var(--tomato); }
 .kpt-cue { color: var(--ink-soft); font-style: italic; }
+.kpt-grab { color: var(--mint-deep); font-weight: 700; }
 .kpt-time { color: var(--ink-soft); }
 .cook-do { font-size: clamp(30px, 5vw, 46px); line-height: 1.08; letter-spacing: -0.02em; margin: 2px 0 0; }
 .cook-keypoints { padding: 18px; border: 1px solid var(--line); border-radius: var(--r-lg); background: rgba(255,255,255,.82); box-shadow: var(--lift); }

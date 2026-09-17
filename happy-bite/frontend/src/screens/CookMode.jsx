@@ -51,14 +51,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as E from "../core/engine.js";
 import { idleWindow, windowLabel } from "../core/window.js";
+import { realCue, stepBrief, stepHeat, vesselToGrab } from "../core/brief.js";
 import * as api from "../lib/api.js";
 import * as voice from "../lib/voice.js";
 import * as wake from "../lib/wake.js";
 import { parseCook } from "../lib/command.js";
+import { raceStop } from "../lib/stopword.js";
 import { useKitchen, stockForServer } from "../state/kitchen.jsx";
 import { useUI } from "../state/ui.jsx";
 import { useApplyAction } from "../state/actions.jsx";
 import { Icon } from "../components/Icon.jsx";
+import Stars from "../components/Stars.jsx";
 import { useChat } from "../components/Chat.jsx";
 import * as sq from "../lib/speechqueue.js";
 import "../styles/method.css";
@@ -85,18 +88,40 @@ export default function CookMode() {
      Jobs already handed out are remembered for the session, so the knife is
      rinsed once, not on every step. A step keeps its job while you're on it. */
   const givenRef = useRef({});                          // step index -> key
-  const gap = useMemo(() => {
+  /* Is there any of it left once this dish has had its share? Only then is
+     "put the eggs back in the fridge" a real job. */
+  const hasLeftover = (id) => {
+    const have = E.held(k.stock.find(a => a.id === id), E.ref(id), E.ref(id).unit);
+    const need = recipe.needs.find(n => n.id === id);
+    if (!have.present || !need) return false;
+    return have.sure && have.qty > E.scale(need.qty, serves, recipe.serves, E.ref(id).unit);
+  };
+  const gapFor = (n) => {
     const given = givenRef.current;
-    const done = Object.entries(given).filter(([n]) => Number(n) !== i).map(([, key]) => key);
-    const w = idleWindow(recipe, i, done);
-    if (w) given[i] = w.key;
+    const done = Object.entries(given).filter(([m]) => Number(m) !== n).map(([, key]) => key);
+    const w = idleWindow(recipe, n, done, { hasLeftover });
+    if (w) given[n] = w.key;
     return w;
-  }, [recipe, i]);
+  };
+  const gap = useMemo(() => gapFor(i), [recipe, i]); // eslint-disable-line react-hooks/exhaustive-deps
+  /* Steps whose window has already been said out loud, so starting the timer
+     doesn't say it a second time. */
+  const gapSaidRef = useRef(new Set());
   const gapRef = useRef(gap); gapRef.current = gap;
 
   const iRef = useRef(0); iRef.current = i;
   const liveRef = useRef(false);
   const listenRef = useRef(null);
+  /* Which listening session a turn belongs to. Bumped on every start and stop.
+
+     "Bob, next step" once went from step 1 to step 3. In development React
+     mounts this screen, unmounts it and mounts it again (StrictMode), which
+     ran startLive twice: the first session's opening sentence was cut off by
+     the second's, its promise resolved, and it carried on into its own
+     listening loop. Two loops heard the same sentence and each moved the step
+     on. A turn from an old session now does nothing, and a loop never starts
+     while another turn is already listening. */
+  const sessionRef = useRef(0);
   const useServer = ui.server.voice;
   const wakeWord = ui.server.wakeWord || wake.DEFAULT_WAKE;
   const wakeWordRef = useRef(wakeWord); wakeWordRef.current = wakeWord;
@@ -111,6 +136,7 @@ export default function CookMode() {
      the milk", mid-recipe, went nowhere. */
   const chat = useChat(context, null, applyAction);
   const sendRef = useRef(chat.send); sendRef.current = chat.send;
+  const stopChatRef = useRef(chat.stop); stopChatRef.current = chat.stop;
   const busy = chat.busy;
 
   useEffect(() => () => voice.stopSpeaking(), []);
@@ -152,21 +178,45 @@ export default function CookMode() {
   }, [k.book, recipe, serves]); // eslint-disable-line
 
   const speak = (text) => voice.speak(text, useServer);
+  // The step said out loud: what to grab, what to do, what goes in (core/brief.js),
+  // and the gap in it if it has one. The window used to be said only when a
+  // timer was started, so arriving at the step, it was on the screen and
+  // nobody mentioned it.
+  const brief = (n) => {
+    const g = gapFor(n);
+    if (g) gapSaidRef.current.add(n);
+    const extra = g ? `${stepHeat(recipe.steps[n]) ? "While it cooks" : "While you wait"}, ${g.say.charAt(0).toLowerCase()}${g.say.slice(1)}` : "";
+    return stepBrief(recipe, n, serves, true, extra);
+  };
+  const heat = stepHeat(step);
+  const grab = vesselToGrab(recipe, i);
 
   /* The timer is the moment the waiting starts, so it is the moment to hear
      what fits in the wait: "You have a 90-second window. Rinse the knife and
      the cutting board." Always spoken: with the local voice (Kokoro) when it
      runs, and the browser's own voice when it doesn't. */
   const startStepTimer = () => {
-    ui.startTimer(step.minutes, step.do.slice(0, 40));
-    if (gap) speak(gap.say);
+    ui.startTimer(E.stepMinutes(step), step.do.slice(0, 40));
+    if (gap && !gapSaidRef.current.has(i)) { gapSaidRef.current.add(i); speak(gap.say); }
+  };
+
+  /* A step chosen by tapping — Next, Back, or a dot in the progress bar. It
+     used to change the screen and say nothing, even with hands-free on: only
+     "Bob, next" read the step. Now a tap reads it too when hands-free is
+     listening, or when "Each step while cooking" is switched on (a setting
+     that, until now, nothing read). */
+  const tapStep = (n) => {
+    const t = goStep(n);
+    if (liveRef.current || k.prefs.readSteps) speak(brief(t));
   };
 
   /* One turn. `awake` is false while waiting for the name, true for the one
      turn after a bare "Bob". Every path out of a handled command calls
      hearNext() with no argument, which is back to waiting. */
   const hearNext = useCallback((awake = false) => {
-    if (!liveRef.current) return;
+    if (!liveRef.current || listenRef.current) return;
+    const session = sessionRef.current;
+    const current = () => session === sessionRef.current && liveRef.current;
     setVstate(awake ? "listening" : "waiting");
     listenRef.current = voice.listenVAD({
       // Waiting: a name is short, so a short pause ends the clip and nothing is
@@ -175,8 +225,9 @@ export default function CookMode() {
       silence: awake ? 1000 : 700,
       maxWait: awake ? 7000 : 9000,
       onText: async (raw) => {
+        if (session !== sessionRef.current) return;         // a turn from a session that has ended
         listenRef.current = null;
-        if (!liveRef.current) return;
+        if (!current()) return;
         let said = (raw || "").trim();
         if (!said) return hearNext();
 
@@ -187,7 +238,19 @@ export default function CookMode() {
           return hearNext(true);
         }
         if (rest) said = rest;                                  // "Bob, next step" in one breath
+        return handle(said);
+      },
+      onError: () => {
+        if (session !== sessionRef.current) return;
+        listenRef.current = null;
+        if (current()) setTimeout(() => current() && hearNext(), 800);
+      },
+    });
 
+    /* What was said to Bob: a command, or a question for the chef. Separate
+       from the listening so "Bob, stop — how long for the onions?" can hand
+       the new question straight back in. */
+    async function handle(said) {
         const c = parseCook(said);
         if (c) {
           if (c.cmd === "stopCooking") { stopLive(); ui.stopCooking(); return; }
@@ -196,15 +259,21 @@ export default function CookMode() {
           if (c.cmd === "stopChef")    { voice.stopSpeaking(); return hearNext(); }
           if (c.cmd === "stopTimer")   { ui.stopTimer(); setVstate("speaking"); await speak("Timer stopped."); return hearNext(); }
           setVstate("speaking");
-          if (c.cmd === "next")        { const t = goStep(iRef.current + 1); await speak(stepBrief(recipe.steps[t], t, total)); }
-          else if (c.cmd === "back")   { const t = goStep(iRef.current - 1); await speak(stepBrief(recipe.steps[t], t, total)); }
-          else if (c.cmd === "repeat") { await speak(stepBrief(recipe.steps[iRef.current], iRef.current, total)); }
+          if (c.cmd === "next")        { const t = goStep(iRef.current + 1); await speak(brief(t)); }
+          else if (c.cmd === "back")   { const t = goStep(iRef.current - 1); await speak(brief(t)); }
+          else if (c.cmd === "goto")   {
+            if (c.step > total) await speak(`There ${total === 1 ? "is only one step" : `are only ${total} steps`}.`);
+            else { const t = goStep(c.step - 1); await speak(brief(t)); }
+          }
+          else if (c.cmd === "repeat") { await speak(brief(iRef.current)); }
           else if (c.cmd === "ingredients") { await speak(ingredientsLine()); }
           else if (c.cmd === "timer")  {
             const s = recipe.steps[iRef.current];
-            const also = gapRef.current ? ` ${gapRef.current.say}` : "";
+            const said = gapSaidRef.current.has(iRef.current);
+            if (gapRef.current) gapSaidRef.current.add(iRef.current);
+            const also = gapRef.current && !said ? ` ${gapRef.current.say}` : "";
             if (c.minutes) { ui.startTimer(c.minutes, s.do.slice(0, 40)); await speak(`Timer on for ${spokenMinutes(c.minutes)}.${also}`); }
-            else if (s.minutes >= 3) { ui.startTimer(s.minutes, s.do.slice(0, 40)); await speak(`Timer on for ${s.minutes} minutes.${also}`); }
+            else if (E.stepMinutes(s) >= 3) { ui.startTimer(E.stepMinutes(s), s.do.slice(0, 40)); await speak(`Timer on for ${E.stepMinutes(s)} minutes.${also}`); }
             else await speak("This step is quick — you watch it rather than time it. Tell me how long if you want a timer.");
           }
           return hearNext();
@@ -215,32 +284,57 @@ export default function CookMode() {
         // nothing. A miss returns null and falls straight through, which is the
         // right way round: a two-second wait is cheap and a confidently wrong
         // parked answer, at the hob, is not.
+        //
+        // All of it — the parked answer, the model, the reading aloud — can be
+        // cut off with "stop Bob" (lib/stopword.js). It often starts before
+        // you've said the right thing.
         setVstate("thinking");
-        const parked = await api.quickAnswer(recipe.id, iRef.current, said);
-        if (!liveRef.current) return;
-        if (parked?.answer) {
-          say(parked.answer, true);
-          setVstate("speaking");
-          await speak(parked.answer);
-          return hearNext();
+        let cut = false;
+        const out = await raceStop({
+          wakeWord: wakeWordRef.current,
+          listen: (turn) => voice.listenVAD({ ...turn, silence: 600, maxWait: 120000, maxLen: 4000 }),
+          work: async () => {
+            const parked = await api.quickAnswer(recipe.id, iRef.current, said);
+            if (cut || !current()) return;
+            if (parked?.answer) {
+              say(parked.answer, true);
+              setVstate("speaking");
+              await speak(parked.answer);
+              return;
+            }
+            const reply = await sendRef.current(said);
+            if (!cut) say(reply || "");
+          },
+        });
+        if (!current()) return;
+        if (out.stopped) {
+          cut = true;
+          stopChatRef.current();                 // the request, the reading-aloud queue, the voice
+          say("");
+          await out.settled;                     // the chef is free again before anything new goes in
+          if (!current()) return;
+          if (out.rest) return handle(out.rest);
+          await voice.chime();                   // "go on" — and it listens for the right question
+          return hearNext(true);
         }
-
-        const reply = await sendRef.current(said);
-        say(reply || "");
         hearNext();
-      },
-      onError: () => { listenRef.current = null; if (liveRef.current) setTimeout(hearNext, 800); },
-    });
+    }
   }, [recipe, total, useServer, goStep, ingredientsLine, finish, say]); // eslint-disable-line
 
   const startLive = useCallback(() => {
     if (!useServer) { ui.say("Turn on the local voice (Whisper + Kokoro) to cook hands-free."); return; }
     setPref("speakReplies", true);
+    const session = ++sessionRef.current;
     liveRef.current = true; setLive(true);
-    (async () => { setVstate("speaking"); await speak(stepBrief(recipe.steps[iRef.current], iRef.current, total)); hearNext(); })();
+    (async () => {
+      setVstate("speaking");
+      await speak(brief(iRef.current));
+      if (session === sessionRef.current) hearNext();
+    })();
   }, [useServer, hearNext, setPref, ui, recipe, total]);
 
   function stopLive() {
+    sessionRef.current++;
     liveRef.current = false; setLive(false); setVstate("");
     try { listenRef.current?.stop(); } catch { /* */ }
     listenRef.current = null;
@@ -302,7 +396,7 @@ export default function CookMode() {
   const inKitchen = useMemo(() => new Map(k.stock.map(a => [a.id, a])), [k.stock]);
   const stateLabel = {
     waiting: `Say “${wakeName}” — then “next”, “repeat”, or ask me anything.`,
-    listening: "Listening…", thinking: "Thinking…", speaking: "Speaking…",
+    listening: "Listening…", thinking: `Thinking… say “${wakeName}, stop” to cancel`, speaking: "Speaking…",
   }[vstate];
   const bgAnim = k.prefs.bgAnim !== false;
   const mood = moodFor(recipe.cuisine);
@@ -318,7 +412,7 @@ export default function CookMode() {
           <ol className="progress" aria-label={`Step ${i + 1} of ${total}`}>
             {recipe.steps.map((_, n) => (
               <li key={n}><button className={n < i ? "is-done" : n === i ? "is-now" : ""}
-                                  onClick={() => goStep(n)} aria-label={`Go to step ${n + 1}`}>
+                                  onClick={() => tapStep(n)} aria-label={`Go to step ${n + 1}`}>
                 {n === i && <span className="progress-emoji" aria-hidden="true">🍳</span>}
               </button></li>
             ))}
@@ -348,8 +442,8 @@ export default function CookMode() {
       <div className="cook-stage">
         <div className="cook-recipe-summary">
           <span>{recipe.name}</span>
-          <b>{recipe.minutes} min total</b>
-          <small>{recipe.complexity === 1 ? "Easy" : recipe.complexity === 3 ? "Involved" : "Some work"}</small>
+          <b>{E.minutesOf(recipe)} min total</b>
+          <small><Stars recipe={recipe} size={15} /></small>
         </div>
         <button className="link cook-ing-toggle" onClick={() => setShowIngredients(!showIngredients)}>
           <Icon name="list" size={20} /> {showIngredients ? "Hide ingredients" : `Ingredients for ${serves}`}
@@ -379,11 +473,12 @@ export default function CookMode() {
           <span className="cook-percent">{Math.round(((i + 1) / total) * 100)}% of the dish</span>
         </div>
 
-        {(step.heat || step.cue) && (
+        {(heat || realCue(step) || grab) && (
           <div className="kpts">
-            {step.heat && <span className="kpt kpt-heat"><Icon name="flame" size={16} /> {step.heat}</span>}
-            {step.cue && <span className="kpt kpt-cue">Watch for: {step.cue.toLowerCase()}</span>}
-            {step.minutes >= 3 && <span className="kpt kpt-time"><Icon name="clock" size={16} /> about {step.minutes} min</span>}
+            {grab && <span className="kpt kpt-grab">Grab {grab}</span>}
+            {heat && <span className="kpt kpt-heat"><Icon name="flame" size={16} /> {heat}</span>}
+            {realCue(step) && <span className="kpt kpt-cue">Watch for: {realCue(step).toLowerCase()}</span>}
+            {E.stepMinutes(step) >= 3 && <span className="kpt kpt-time"><Icon name="clock" size={16} /> about {E.stepMinutes(step)} min</span>}
           </div>
         )}
 
@@ -436,12 +531,12 @@ export default function CookMode() {
         )}
 
         <div className="cook-tools">
-          {step.minutes >= 3 && (
+          {E.stepMinutes(step) >= 3 && (
             <button className="btn btn-small btn-ghost" onClick={startStepTimer}>
-              <Icon name="clock" size={20} /> {step.minutes} min timer
+              <Icon name="clock" size={20} /> {E.stepMinutes(step)} min timer
             </button>
           )}
-          <button className="btn btn-small btn-ghost" onClick={() => speak(stepBrief(step, i, total))}>
+          <button className="btn btn-small btn-ghost" onClick={() => speak(brief(i))}>
             <Icon name="speaker" size={20} /> Read aloud
           </button>
           {ui.server.images && !pictures[i] && (
@@ -452,12 +547,12 @@ export default function CookMode() {
         </div>
 
         <div className="cook-nav">
-          <button className="btn btn-ghost" disabled={i === 0} onClick={() => goStep(i - 1)}>
+          <button className="btn btn-ghost" disabled={i === 0} onClick={() => tapStep(i - 1)}>
             <Icon name="back" /> Back
           </button>
           {last
             ? <button className="btn btn-primary" onClick={finish}>Finished</button>
-            : <button className="btn btn-primary" onClick={() => goStep(i + 1)}>Next step <Icon name="next" /></button>}
+            : <button className="btn btn-primary" onClick={() => tapStep(i + 1)}>Next step <Icon name="next" /></button>}
         </div>
 
         <button className="link cook-end" onClick={() => { stopLive(); ui.stopCooking(); }}>Stop cooking</button>
@@ -491,17 +586,6 @@ export function CookDock() {
       <button className="cook-dock-x" onClick={ui.stopCooking} aria-label="Stop cooking"><Icon name="close" size={18} /></button>
     </div>
   );
-}
-
-/* One step, said like a cook — no field labels, heat woven in, then it hands the
-   turn back to you: it asks, then waits for "done" (or a question). */
-function stepBrief(s, idx, total, ask = true) {
-  const lead = idx + 1 === total ? "Last step. " : `Step ${idx + 1}. `;
-  const heat = s.heat ? `On ${s.heat} heat, ` : "";
-  const body = heat ? heat + s.do.charAt(0).toLowerCase() + s.do.slice(1) : s.do;
-  const cue = s.cue ? ` Look for ${s.cue.toLowerCase()}.` : "";
-  const prompt = idx + 1 === total ? " And that's it — enjoy." : " Tell me when that's done.";
-  return lead + body + cue + (ask ? prompt : "");
 }
 
 function spokenMinutes(m) {

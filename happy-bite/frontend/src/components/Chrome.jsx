@@ -103,7 +103,7 @@ const TABS = [
 /* Four tabs around one round button, the way a phone dashboard does it.
    The button doesn't navigate: it opens a tray of things to *do*. */
 export function TabBar() {
-  const { tab, setTab, openChat, openSheet, server } = useUI();
+  const { tab, setTab, openChat, openSheet, server, scanReceipt } = useUI();
   const [tray, setTray] = useState(false);
   const act = (fn) => { setTray(false); fn(); };
 
@@ -121,7 +121,7 @@ export function TabBar() {
           <button className="tray-item" role="menuitem" onClick={() => act(() => openSheet("link"))}>
             <Icon name="link" /> <span>Add from a link</span>
           </button>
-          <button className="tray-item" role="menuitem" onClick={() => act(() => setTab("receipt"))}>
+          <button className="tray-item" role="menuitem" onClick={() => act(() => scanReceipt())}>
             <Icon name="receipt" /> <span>Scan a receipt</span>
           </button>
           {!server.chat && <p className="tray-note">The chef, pictures and links need the server. Everything else works without it.</p>}

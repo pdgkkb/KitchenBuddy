@@ -139,6 +139,8 @@ export function scale(qty, serves, base, unit) {
   const raw = Number(qty) * (to / from);
   if (!Number.isFinite(raw)) return 0;
   if (unit === "u") return Math.max(1, Math.round(raw));
+  // Litres are small numbers: rounding 0.7 l to the nearest half made it 0.5.
+  if (unit === "l") return Math.round(raw * 20) / 20;
   if (raw >= 100) return Math.round(raw / 10) * 10;
   if (raw >= 10) return Math.round(raw);
   return Math.round(raw * 2) / 2;
@@ -168,6 +170,177 @@ export function tasteBonus(recipe, taste) {
   return bonus;
 }
 
+/* ---------- Difficulty ----------
+   Half a star to five. It replaced "Easy / Some work / Involved": three words
+   that put porridge and a Sunday braise one notch apart.
+
+   A recipe with a method is rated from it, not from the number it was saved
+   with (which was the model's guess): how many ingredients, how many go in at
+   the busiest step, how many things to wash, and how long it takes. An egg
+   fried in one pan is ½, a plain omelette 1, a stir-fry with rice 2½, a
+   lasagne 4. Mirrors stars_from_method in backend/app/recipes.py — change both
+   together.
+
+   `complexity` (1–3) is kept underneath because the filters, the saved book
+   and the server's "understand" step all speak it. A recipe with stars has its
+   complexity read off them; an old recipe without stars gets them from its
+   complexity. */
+
+export const STAR_STEPS = [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5];
+
+const WASH = [
+  /\b(frying pan|skillet|griddle)\b|(?<!sauce)\bpan\b/i,
+  /\b(saucepan|pot|casserole|dutch oven|stockpot)\b/i,
+  /\bwok\b/i,
+  /(?<!serving )(?<!warm )\bbowl\b/i,
+  /\b(baking|roasting|oven|ovenproof|gratin) (dish|tray|tin|sheet|pan)\b|\bbaking paper\b|\b(loaf|cake|pie|muffin) tin\b/i,
+  /\b(chop|dice|slice|mince|cube|halve|quarter|shred|julienne|peel|trim|cut)\w*/i,
+  /\b(grate|grated|grater|zest)\b/i,
+  /\b(drain|colander|sieve|sift|strain)\w*/i,
+  /\b(blend|blender|food processor|whizz|puree|purée)\w*/i,
+  /\b(mixer|stand mixer|electric whisk)\b/i,
+  /\b(rolling pin|roll out|roll it out)\b/i,
+  /\bsteamer\b/i,
+];
+const ANOTHER = /\b(another|second|separate|clean|large|small) (frying pan|pan|saucepan|pot|bowl)\b/gi;
+const clamp01 = x => Math.min(1, Math.max(0, x));
+
+export function starsFromMethod(recipe) {
+  const needs = recipe.needs || [], seasoning = recipe.seasoning || [], steps = recipe.steps || [];
+  const salt = new Set(seasoning.map(x => x.id));
+  const n = needs.length + (recipe.extras || []).length + 0.5 * seasoning.length;
+  const busiest = Math.max(1, ...steps.map(st => (st.uses || []).reduce((t, u) => t + (salt.has(u) ? 0.5 : 1), 0)));
+  const text = steps.map(st => `${st.do || ""} ${st.heat || ""}`).join(" ");
+  const wash = WASH.filter(re => re.test(text)).length + (text.match(ANOTHER) || []).length;
+  const minutes = Number(recipe.minutes) || steps.reduce((t, st) => t + (Number(st.minutes) || 0), 0) || 15;
+  const score = 0.30 * clamp01((n - 1) / 14)
+              + 0.20 * clamp01((busiest - 1) / 5)
+              + 0.25 * clamp01((Math.max(1, wash) - 1) / 6)
+              + 0.25 * clamp01(Math.log(Math.max(minutes, 5) / 5) / Math.log(36));
+  return Math.min(5, Math.max(0.5, Math.round((0.5 + 4.5 * score) * 2) / 2));
+}
+
+export function starsOf(recipe) {
+  if ((recipe?.steps || []).length >= 2) return starsFromMethod(recipe);
+  const s = Number(recipe?.stars);
+  if (Number.isFinite(s) && s > 0) return Math.min(5, Math.max(0.5, Math.round(s * 2) / 2));
+  return { 1: 1, 2: 2.5, 3: 4 }[recipe?.complexity] || 2;
+}
+
+export function complexityOf(recipe) {
+  if (!recipe?.stars && !(recipe?.steps || []).length && [1, 2, 3].includes(recipe?.complexity)) return recipe.complexity;
+  const s = starsOf(recipe);
+  return s <= 1.5 ? 1 : s <= 3 ? 2 : 3;
+}
+
+/* The most stars each complexity filter lets through. */
+export const STARS_FOR_COMPLEXITY = { 1: 1.5, 2: 3, 3: 5 };
+
+/* ---------- Time ----------
+   The minutes a step's own words give it, and a recipe's honest total. The
+   same rules as the server's recipes.text_minutes, for recipes saved before it
+   existed: "Roast for 12 minutes on the first side" with a `minutes` of 2 was
+   shown as "watch closely", had no timer, and made a 40-minute tray bake read
+   15 min. */
+
+const NUMBER_WORDS = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
+  nine: 9, ten: 10, eleven: 11, twelve: 12, fifteen: 15, twenty: 20, thirty: 30, "forty-five": 45, forty: 40, sixty: 60 };
+const TIME_IN_TEXT = /\b(\d+(?:\.\d+)?|a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty-five|forty|sixty)(?:\s*(?:-|to|or)\s*(\d+|[a-z]+))?\s*(hours?|hrs?|minutes?|mins?|seconds?|secs?)\b(\s+(?:per|a|on each|each)\s+side)?/gi;
+const numberOf = (w) => /^\d+(\.\d+)?$/.test(w) ? Number(w) : NUMBER_WORDS[String(w).toLowerCase()];
+
+export function textMinutes(text) {
+  let total = 0;
+  for (const [, low, high, unit, perSide] of String(text || "").matchAll(TIME_IN_TEXT)) {
+    const n = numberOf(high || low);
+    if (n === undefined) continue;
+    const u = unit.toLowerCase();
+    total += (u.startsWith("h") ? n * 60 : u.startsWith("s") ? n / 60 : n) * (perSide ? 2 : 1);
+  }
+  const second = String(text || "").match(/minutes? on the first side,?\s+(?:and\s+)?(\w+)\s+on the (?:second|other)/i);
+  if (second) total += numberOf(second[1]) || 0;
+  return total;
+}
+
+export const stepMinutes = (step) => Math.round(Math.max(Number(step?.minutes) || 0, textMinutes(step?.do)));
+
+const OVEN_STEP = /\b(roast|bake|baking|oven)/i;
+const OVEN_ON = /\b(preheat|turn the oven on|heat the oven|oven on to|switch the oven on)/i;
+
+export function minutesOf(recipe) {
+  const steps = recipe?.steps || [];
+  let summed = steps.reduce((t, s) => t + stepMinutes(s), 0);
+  if (summed && steps.some(s => OVEN_STEP.test(s.do || "") || /oven/i.test(s.heat || "")) && !steps.some(s => OVEN_ON.test(s.do || ""))) summed += 10;
+  const stated = Number(recipe?.minutes) || 0;
+  if (!summed) return stated;
+  return stated >= summed && stated <= summed + 15 ? stated : summed;
+}
+
+/* ---------- Portions ----------
+   The server's portion rule (backend recipes.PORTION_G), for recipes saved
+   before it existed: 800 g of chicken and 800 g of potatoes "for 2". Per
+   person, by shelf: the most that is still a plate of food, and the ordinary
+   portion an amount over it comes down to. */
+
+const PORTION_G = {
+  meat: [250, 150], seafood: [250, 150], produce: [250, 175], frozen: [250, 150],
+  pantry: [150, 90], bakery: [200, 100], dairy: [250, 100],
+};
+
+export function sanePortions(recipe) {
+  const heads = Math.max(1, Number(recipe?.serves) || 4);
+  const adjusted = [];
+  const needs = (recipe?.needs || []).map(n => {
+    const r = ref(n.id);
+    const limit = r.unit === "g" && !/\b(oil|vinegar)\b/i.test(r.name || "") && PORTION_G[r.category];
+    if (!limit || !(n.qty > limit[0] * heads)) return n;
+    const qty = limit[1] * heads;
+    adjusted.push(`${r.name}: ${n.qty} -> ${qty} g`);
+    return { ...n, qty, flexible: true };
+  });
+  if (!adjusted.length) return recipe;
+  return { ...recipe, needs, adjusted: [...(recipe.adjusted || []), ...adjusted] };
+}
+
+/* ---------- What you've cooked ----------
+   Every finished cook is one entry: { date, recipe, at, name, serves, stars,
+   verdict }. Entries from before the name was kept have only { date, recipe },
+   so everything else is looked up in the book, and a recipe since thrown away
+   still shows as something you cooked rather than vanishing. */
+
+export function cookedHistory(history, book) {
+  const byId = new Map((book || []).map(r => [r.id, r]));
+  return [...(history || [])]
+    .map((h, i) => ({ ...h, order: h.at || i, recipeNow: byId.get(h.recipe) || null }))
+    .sort((a, b) => (b.date || "").localeCompare(a.date || "") || b.order - a.order)
+    .map(h => ({
+      ...h,
+      name: h.name || h.recipeNow?.name || "A recipe no longer in your book",
+      stars: h.stars ?? (h.recipeNow ? starsOf(h.recipeNow) : null),
+    }));
+}
+
+export function historyStats(history, now = new Date()) {
+  const entries = history || [];
+  const day = (offset) => isoDay(new Date(now.getTime() - offset * DAY));
+  const days = new Set(entries.map(h => h.date));
+  const weekStart = day(6), monthStart = isoDay(now).slice(0, 7);
+  // Days in a row with something cooked, ending today — or yesterday, so an
+  // evening that hasn't cooked yet doesn't break it.
+  let streak = 0;
+  for (let i = days.has(day(0)) ? 0 : 1; days.has(day(i)); i++) streak++;
+  const counts = new Map();
+  for (const h of entries) counts.set(h.recipe, (counts.get(h.recipe) || 0) + 1);
+  const [favId, favCount] = [...counts].sort((a, b) => b[1] - a[1])[0] || [null, 0];
+  return {
+    total: entries.length,
+    thisWeek: entries.filter(h => h.date >= weekStart).length,
+    thisMonth: entries.filter(h => (h.date || "").startsWith(monthStart)).length,
+    streak,
+    favourite: favCount > 1 ? { recipe: favId, count: favCount,
+                                name: [...entries].reverse().find(h => h.recipe === favId && h.name)?.name || null } : null,
+  };
+}
+
 /* ---------- Filters and scoring ---------- */
 
 export function exclusionsFor(diners, people) {
@@ -176,8 +349,8 @@ export function exclusionsFor(diners, people) {
 
 export function passesFilters(recipe, f) {
   if (f.mealType && !recipe.types.includes(f.mealType)) return false;
-  if (f.maxMinutes && recipe.minutes > f.maxMinutes) return false;
-  if (f.maxComplexity && recipe.complexity > f.maxComplexity) return false;
+  if (f.maxMinutes && minutesOf(recipe) > f.maxMinutes) return false;
+  if (f.maxComplexity && complexityOf(recipe) > f.maxComplexity) return false;
   if (f.cuisine && recipe.cuisine !== f.cuisine) return false;
   if (f.mustUse && !recipe.needs.some(n => n.id === f.mustUse)) return false;
   return true;
@@ -284,6 +457,34 @@ export function propose(ctx) {
     considered: pool.length, cookableCount: ready.length,
     nearMisses: rated.filter(r => !r.cookable).length
   };
+}
+
+/* Three dishes to choose between, the way a game offers three upgrades.
+
+   The first draw is the best three by score — the proposal and its two
+   alternates. A reroll draws three at random from everything cookable,
+   leaving out the ones just shown so it never deals the same hand twice;
+   `random` is injectable so the tests can pin it. Fewer than three cookable?
+   The near misses fill the gaps, flagged by `cookable: false`. */
+export function drawChoices(ctx, { reroll = false, avoid = [], random = Math.random } = {}) {
+  const excluded = exclusionsFor(ctx.diners, ctx.people);
+  const book = ctx.recipes || RECIPES;
+  const rated = book
+    .filter(r => passesFilters(r, ctx.filters || {}))
+    .map(r => assess(r, ctx.stock, excluded, ctx.taste, ctx.serves))
+    .filter(Boolean)
+    .sort((a, b) => (b.cookable - a.cookable) || (b.score - a.score));
+  if (!reroll) return rated.slice(0, 3);
+
+  const fresh = rated.filter(n => !avoid.includes(n.recipe.id));
+  const pool = fresh.length >= 3 ? fresh : [...fresh, ...rated.filter(n => avoid.includes(n.recipe.id))];
+  const ready = pool.filter(n => n.cookable);
+  const deck = ready.length >= 3 ? ready : pool;
+  const hand = [];
+  const left = [...deck];
+  while (hand.length < 3 && left.length) hand.push(left.splice(Math.floor(random() * left.length), 1)[0]);
+  if (hand.length < 3) hand.push(...pool.filter(n => !hand.includes(n)).slice(0, 3 - hand.length));
+  return hand;
 }
 
 /* Ignores score, urgency and taste. Keeps exclusions: a dish somebody at

@@ -93,12 +93,11 @@ export function useApplyAction() {
         return { text: `Cooking ${r.name}` };
       }
       case "open_featured": {
-        const id = ui.featured || (kitchen.k.book[0] && kitchen.k.book[0].id);
-        const r = id && kitchen.k.book.find(x => x.id === id);
-        if (!r) return null;
+        // "Let's cook" with no dish named: three from the book to choose from.
+        if (!kitchen.k.book.length) return null;
         ui.closeChat();
-        ui.openSheet("recipe", { id: r.id });
-        return { text: `Opened ${r.name}` };
+        ui.openSheet("pick");
+        return { text: "Pick one of these" };
       }
       case "set_anim": {
         kitchen.setPref("bgAnim", action.on);

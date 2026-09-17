@@ -1,7 +1,7 @@
 /* "How was this picked?" — the ranking, opened up. Four numbers, each on
    its own scale, added together. Nothing hidden, nothing weighted in secret. */
 
-import { SCORE_PARTS } from "../core/engine.js";
+import { SCORE_PARTS, minutesOf } from "../core/engine.js";
 import { RangeBar } from "../components/Charts.jsx";
 import { listOf } from "../screens/Today.jsx";
 
@@ -12,7 +12,7 @@ export default function ScoreSheet({ pick }) {
   const notes = {
     coverage: `${pick.have} of ${pick.total} ingredients are in, in the amounts this table needs.`,
     urgency: pick.urgent.length ? `Uses ${listOf(pick.urgent).toLowerCase()} before it goes off.` : "Uses nothing that's about to go off.",
-    speed: `${pick.recipe.minutes} minutes. Anything under an hour earns a little.`,
+    speed: `${minutesOf(pick.recipe)} minutes. Anything under an hour earns a little.`,
     taste: p.taste === 0 ? "No reviews yet — so this part can't help. Rate what you cook and it starts to."
          : p.taste < 0 ? "You said “not again”. Buried, not banned." : "Built from what you said you liked."
   };

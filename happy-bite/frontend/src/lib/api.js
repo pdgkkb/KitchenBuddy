@@ -141,6 +141,17 @@ export async function say(text) {
   return res.blob();
 }
 
+/* A photo of a till receipt -> {store, lines}. The household's own products
+   and hand corrections go with it: the server matches lines against them. */
+export async function readReceipt(photo, custom, corrections) {
+  const form = new FormData();
+  form.append("photo", photo, photo.name || "receipt.jpg");
+  form.append("custom", JSON.stringify(custom || {}));
+  form.append("corrections", JSON.stringify(corrections || {}));
+  // OCR, a product lookup per line and a model pass: a minute on a laptop is normal.
+  return (await call("/api/receipt/read", { method: "POST", body: form }, 180000)).json();
+}
+
 export async function hear(blob) {
   const form = new FormData();
   form.append("audio", blob, blob.type.includes("mp4") ? "speech.mp4" : "speech.webm");

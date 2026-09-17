@@ -47,7 +47,7 @@ export default function Kitchen() {
       <h1 className="screen-title">Kitchen</h1>
       <p className="empty-note">Nothing in the kitchen yet. Scan a receipt to fill it, or tell the chef what you bought
         (“I bought 2 litres of milk and a dozen eggs”).</p>
-      <button className="btn btn-ghost" onClick={() => ui.setTab("receipt")}>Scan a receipt</button>
+      <button className="btn btn-ghost" onClick={() => ui.scanReceipt()}>Scan a receipt</button>
     </div>
   );
 

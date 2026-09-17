@@ -49,6 +49,13 @@ async function load() {
     await Store.write("myRecipes", s.myRecipes);
     await Store.write("recipeBookReset", true);
   }
+  // Saved recipes written before the portion rule: 800 g of chicken "for 2"
+  // comes down to a plate of food, once, and is saved that way.
+  const sane = (s.myRecipes || []).map(E.sanePortions);
+  if (sane.some((r, i) => r !== s.myRecipes[i])) {
+    s.myRecipes = sane;
+    await Store.write("myRecipes", s.myRecipes);
+  }
   if (!s.stock) {
     const t0 = E.today().getTime();
     s.stock = STARTING_STOCK.map(a => ({
@@ -123,11 +130,22 @@ export function KitchenProvider({ children }) {
         set({
           stock: stock.filter(a => a.qty > 0),
           planned: get().planned.filter(x => x !== recipe.id),
-          history: [...get().history, { date: E.isoDay(), recipe: recipe.id }].slice(-400)
+          // Name, table and difficulty as they were that night: the history
+          // still reads right after the recipe is renamed or thrown away.
+          history: [...get().history, { date: E.isoDay(), recipe: recipe.id, at: Date.now(), name: recipe.name,
+                                        serves, stars: E.starsOf(recipe) }].slice(-400)
         });
       },
 
-      saveReview: (review) => set({ taste: E.applyReview(get().taste, review) }),
+      saveReview: (review) => {
+        // The verdict also goes on the most recent cook of that dish, so the
+        // history can say "Loved it" next to the night it was loved.
+        const history = [...get().history];
+        for (let i = history.length - 1; i >= 0; i--) {
+          if (history[i].recipe === review.recipe) { history[i] = { ...history[i], verdict: review.verdict }; break; }
+        }
+        set({ taste: E.applyReview(get().taste, review), history });
+      },
 
       setStock(id, qty, unit) {
         const stock = qty <= 0

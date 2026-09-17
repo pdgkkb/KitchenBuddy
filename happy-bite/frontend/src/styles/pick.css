@@ -1,0 +1,86 @@
+/* The three-card chooser (sheets/Pick.jsx).
+
+   Cards are dealt one after another: each rises, overshoots a touch and
+   settles, 90 ms apart — the upgrade screen of a survivors game, kept short
+   enough that it never makes you wait to choose. Reroll deals them again. */
+
+.pick { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 16px; }
+.pick-scrim {
+  position: absolute; inset: 0;
+  background: rgba(10, 18, 14, .62);
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  animation: pick-fade .2s ease-out both;
+}
+.pick-panel { position: relative; width: min(1040px, 100%); max-height: 100%; overflow: auto; }
+
+.pick-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 18px; color: #fff; }
+.pick-head .icon-btn { color: var(--text-strong); }
+.pick-eyebrow { margin: 0; font-size: var(--fs-eyebrow, 13px); font-weight: 800; letter-spacing: .12em; text-transform: uppercase; opacity: .8; }
+.pick-title { margin: 2px 0 0; font-size: clamp(30px, 5vw, 44px); font-weight: 800; line-height: 1.05; }
+
+.pick-cards { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.pick-cards > li { animation: pick-deal .46s cubic-bezier(.2, .9, .3, 1.25) both; animation-delay: calc(var(--i) * 90ms); }
+
+.pick-card {
+  position: relative; width: 100%; height: 100%;
+  display: flex; flex-direction: column; text-align: left;
+  border-radius: var(--r-lg, 22px); overflow: hidden;
+  background: var(--bg-surface, #fff); color: var(--text);
+  border: 2px solid var(--border-highlight, rgba(255, 255, 255, .7));
+  box-shadow: var(--shadow-xl);
+  transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease;
+}
+.pick-card:hover, .pick-card:focus-visible { transform: translateY(-6px) scale(1.02); border-color: var(--primary); box-shadow: var(--shadow-xl), var(--shadow-glow-primary); }
+.pick-card:active { transform: translateY(-2px) scale(.99); }
+
+.pick-key {
+  position: absolute; top: 10px; left: 10px; z-index: 1;
+  width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center;
+  background: var(--glass-dark, rgba(20, 32, 26, .86)); color: #fff; font-weight: 800;
+}
+.pick-photo { position: relative; aspect-ratio: 4 / 3; background: var(--tint, var(--bg-sunken)); color: rgba(255, 255, 255, .9); overflow: hidden; }
+.pick-photo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.pick-photo .dish-fallback { position: absolute; inset: 25%; width: 50%; height: 50%; }
+
+.pick-body { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px 16px; flex: 1; }
+.pick-name { font-size: 21px; font-weight: 800; line-height: 1.2; color: var(--text-strong); }
+.pick-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.pick-time { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; color: var(--text-muted); }
+.pick-need { margin-top: auto; font-size: 15px; color: var(--text-muted); }
+.pick-need.is-ready { color: var(--primary-strong); font-weight: 700; }
+.pick-card.is-short .pick-photo { filter: saturate(.55); }
+
+.pick-card.is-empty {
+  align-items: center; justify-content: center; gap: 8px; min-height: 260px; text-align: center;
+  background: rgba(255, 255, 255, .1); color: #fff; border: 2px dashed rgba(255, 255, 255, .5); box-shadow: none;
+}
+.pick-card.is-empty .pick-name, .pick-card.is-empty .pick-need { color: #fff; }
+
+.pick-foot { display: flex; justify-content: center; margin-top: 20px; }
+.pick-reroll { background: var(--bg-surface); min-width: 180px; }
+
+@keyframes pick-deal {
+  0%   { opacity: 0; transform: translateY(46px) scale(.72) rotate(-4deg); }
+  70%  { opacity: 1; transform: translateY(-6px) scale(1.04) rotate(.6deg); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes pick-fade { from { opacity: 0; } }
+
+/* Phone: the cards stack, and each lays its photo beside the words so all
+   three fit on one screen without scrolling. */
+@media (max-width: 720px) {
+  .pick { align-items: end; padding: 12px; }
+  .pick-cards { grid-template-columns: 1fr; gap: 10px; }
+  .pick-card { flex-direction: row; min-height: 118px; }
+  .pick-photo { aspect-ratio: auto; width: 38%; flex: none; }
+  .pick-body { padding: 12px 14px; gap: 6px; }
+  .pick-name { font-size: 18px; }
+  .pick-card.is-empty { flex-direction: row; min-height: 90px; }
+  .pick-title { font-size: 30px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pick-cards > li, .pick-scrim { animation: none; }
+  .pick-card { transition: none; }
+  .pick-card:hover, .pick-card:focus-visible { transform: none; }
+}

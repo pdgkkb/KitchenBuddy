@@ -294,7 +294,7 @@ export function listenVAD({ onText, onError, onStart, silence = 1000, maxWait = 
   if (state !== "ok") { onError?.(LISTEN_REASON[state] || "Can't listen."); return { stop() {} }; }
 
   let recorder = null, meter = 0;
-  let stopped = false, speaking = false, started = false;
+  let stopped = false, speaking = false, started = false, aborted = false;
   let lastVoice = 0, startedAt = 0;
   const chunks = [];
 
@@ -313,6 +313,7 @@ export function listenVAD({ onText, onError, onStart, silence = 1000, maxWait = 
       stopMeter();
       // The stream and the AudioContext stay open on purpose — the next turn
       // reuses them. releaseMic() is the session's job, not this turn's.
+      if (aborted) return;                                  // thrown away, see abort()
       if (stopped && !started) return;                     // cancelled before any speech
       if (!started) { onText?.(""); return; }              // never heard anything
       try {
@@ -346,5 +347,12 @@ export function listenVAD({ onText, onError, onStart, silence = 1000, maxWait = 
     onError?.("Microphone access was refused. Check the site's permissions.");
   });
 
-  return { stop() { stopped = true; endRecording(); } };
+  // stop() ends the recording and still transcribes what was said; abort()
+  // throws it away. A turn cancelled because its moment has passed — the
+  // "stop Bob" watch once the answer has arrived — must not spend a
+  // transcription on audio nobody will read.
+  return {
+    stop() { stopped = true; endRecording(); },
+    abort() { stopped = true; aborted = true; chunks.length = 0; endRecording(); },
+  };
 }

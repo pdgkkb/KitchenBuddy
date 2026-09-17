@@ -28,7 +28,8 @@ export function AdjustSheet() {
       </Row>
       <Row label="Effort">
         {COMPLEXITY.map(c => <Chip key={c.level} on={(f.maxComplexity || 3) === c.level}
-          onClick={() => setFilter("maxComplexity", c.level === 3 ? null : c.level)}>{c.name}</Chip>)}
+          onClick={() => setFilter("maxComplexity", c.level === 3 ? null : c.level)}>
+          {c.level === 3 ? "Any" : `Up to ${E.STARS_FOR_COMPLEXITY[c.level]} ★`}</Chip>)}
       </Row>
       <Row label="Kitchen">
         <Chip on={!f.cuisine} onClick={() => setFilter("cuisine", null)}>Anywhere</Chip>
@@ -114,6 +115,7 @@ export function VerifySheet({ index }) {
   return (
     <>
       <p className="raw-label">{line.raw}</p>
+      {line.product && <p className="sub-note">Closest product found: {line.product}</p>}
       <input className="field" type="search" placeholder="Search products" value={q} onChange={(e) => setQ(e.target.value)} />
       <div className="chips chips-scroll" style={{ marginTop: 14 }}>
         <button className={"chip" + (!cat ? " is-on" : "")} onClick={() => setCat(null)}>All</button>

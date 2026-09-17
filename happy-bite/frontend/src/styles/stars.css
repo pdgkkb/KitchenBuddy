@@ -1,0 +1,7 @@
+/* Difficulty stars (components/Stars.jsx). Amber, the app's warm accent. */
+.stars { display: inline-flex; align-items: center; gap: 1px; vertical-align: -2px; }
+.star { flex: none; }
+.star-back { fill: none; stroke: var(--accent, #F5A524); stroke-width: 1.6; stroke-linejoin: round; opacity: .55; }
+.star-fill { fill: var(--accent, #F5A524); stroke: var(--accent, #F5A524); stroke-width: 1.6; stroke-linejoin: round; }
+/* On a photo, the outline needs to stay visible. */
+.tag .star-back, .pick-card .star-back { opacity: .8; }

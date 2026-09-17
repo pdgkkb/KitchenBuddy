@@ -11,6 +11,14 @@ Two models, neither of which needs to see a picture:
 
 Splitting it this way means the local Qwen is enough. No vision model, no cloud.
 
+Between the two sits RETRIEVAL (app/products.py). Each line is looked up among
+real products from Open Food Facts, and near-matches of lines this household
+already corrected by hand, and the model is shown both. It no longer has to
+know that CRF is Carrefour; it has to agree that "Lait demi-écrémé, Carrefour,
+filed under semi-skimmed milk" is what "CRF LT DEMI ECR 1L" means. With the
+model switched off, or failing, the lookup alone still produces a receipt —
+every line it isn't sure of is left for the person to check.
+
 Everything the model returns is untrusted, same as recipes: an id that isn't in
 the catalogue is dropped to null so the existing correction UI asks you, and a
 quantity that doesn't parse becomes a single unit. The household's remembered
@@ -19,6 +27,7 @@ corrections are applied in the browser afterwards, exactly as with the sample.
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import io
 import json
@@ -26,6 +35,9 @@ import re
 import shutil
 import sys
 from pathlib import Path
+
+from .catalog import id_list
+from .products import STORES, line_terms, quantity, remembered, similarity, words
 
 # Lines that are never food. Cheap to check, and it keeps the model's input
 # short enough that a 7B answers in one pass.
@@ -36,6 +48,9 @@ NOISE = re.compile(
     r"ticket|caisse|vendeur|siret|tel|t[ée]l|www|http|facture|remise|reduction|"
     r"réduction|fidelite|fidélité|points|solde|date|heure|caissier|client"
     r")\b", re.I)
+
+ADDRESS = re.compile(r"^\s*\d*\s*(rue|avenue|av|bd|boulevard|place|route|chemin|allee|allée|quai|zac|za|centre commercial)\b"
+                     r"|\b\d{5}\b(?!\s*[.,]\d)", re.I)
 
 PRICE = re.compile(r"\d+[.,]\d{2}\s*(?:€|eur|\$|£)?\s*$", re.I)
 
@@ -59,7 +74,15 @@ Rules:
 - NEVER invent an id. If it is food but no id fits, return id null and keep the
   raw line — the user will map it and the app will remember.
 - The price is not a quantity. A number with two decimals at the end of a line
-  is money."""
+  is money.
+
+Some lines come with evidence underneath:
+  corrected before  this household mapped a line like it by hand. Follow it
+                    unless the line is plainly a different product.
+  database          real products whose names match the line, with the
+                    ingredient id each is filed under. Strong evidence when the
+                    product clearly IS the line; weak when it only shares a word.
+The evidence narrows the choice; the id must still come from the id list."""
 
 SCHEMA = {
     "type": "object",
@@ -153,6 +176,8 @@ def tidy(text: str, limit: int = 120) -> list[str]:
             continue
         if not re.search(r"[A-Za-zÀ-ÿ]{3}", s):          # no real word on it
             continue
+        if ADDRESS.search(s):                            # the shop's street and town
+            continue
         out.append(s[:80])
         if len(out) >= limit:
             break
@@ -161,24 +186,182 @@ def tidy(text: str, limit: int = 120) -> list[str]:
 
 # ------------------------------------------------------------------ step 2: mapping
 
-async def read(data: bytes, llm, known: dict[str, dict], languages: str = "fra+eng") -> dict:
+async def read(data: bytes, llm, known: dict[str, dict], languages: str = "fra+eng",
+               products=None, corrections: dict | None = None, ids_limit: int = 0) -> dict:
     """Photograph -> the receipt shape the app's correction screen already uses."""
     lines = tidy(to_text(data, languages))
     if not lines:
         raise ReceiptError("That looks like a photo of something else — no product "
                            "lines were found on it.")
-    if not llm:
-        raise ReceiptError("The assistant is switched off, so the lines can't be "
-                           "matched to ingredients. Turn it on in backend/.env.")
+    return await match(lines, llm, known, products, corrections, ids_limit)
 
-    ids = ", ".join(f"{i} ({v.get('unit', 'g')})" for i, v in list(known.items())[:600])
-    user = ("Ingredient ids: " + ids + "\n\nReceipt text:\n" + "\n".join(lines))
+
+async def match(lines: list[str], llm, known: dict[str, dict], products=None,
+                corrections: dict | None = None, ids_limit: int = 0) -> dict:
+    """Receipt lines -> receipt. Separate from `read` so it can be tried on
+    typed-in lines, without a photograph or tesseract."""
+    looked = await asyncio.to_thread(_look_up, lines, known, products, corrections or {})
+    if not llm:
+        if not any(h["iid"] or h["memory"] for h in looked):
+            raise ReceiptError("The assistant is switched off and the product database "
+                               "isn't built, so the lines can't be matched to ingredients. "
+                               "Turn the assistant on in backend/.env, or run "
+                               "python3 import_openfoodfacts.py --download.")
+        return from_lookup(lines, looked, known)
+
+    keep = {h["iid"] for h in looked if h["iid"]} | {h["memory"][1] for h in looked if h["memory"] and h["memory"][1]}
+    keep |= {p["iid"] for h in looked for p in h["products"] if p["iid"]}
+    # The whole catalogue is three thousand entries — far more than a small
+    # model's window. What the lookup found is always in; the rest fills the
+    # budget. An ingredient left out still arrives as a null id to correct.
+    ids = id_list(known, keep=keep, limit=ids_limit or 6000)
+    user = "Ingredient ids: " + ids + "\n\nReceipt lines:\n" + "\n".join(
+        _evidence(i, line, h) for i, (line, h) in enumerate(zip(lines, looked), 1))
     try:
         out = await llm.json(SYSTEM, user, SCHEMA, 2000)
     except Exception as e:  # noqa: BLE001
+        if any(h["iid"] or h["memory"] for h in looked):
+            print(f"receipt: the model failed ({type(e).__name__}: {str(e)[:160]}) — using the lookup alone")
+            return from_lookup(lines, looked, known)
         raise ReceiptError(f"The assistant couldn't read the receipt "
                            f"({type(e).__name__}).") from None
-    return clean(out, known)
+    receipt = merge(clean(out, known), lines, looked, known)
+    if receipt["store"] == "Receipt":
+        receipt["store"] = _store(lines) or "Receipt"
+    return receipt
+
+
+# ------------------------------------------------------------------ retrieval
+
+# A remembered correction is followed without asking only when the line is all
+# but the same one; below that it is evidence for the model, nothing more.
+SAME_LINE = 0.85
+
+
+def _look_up(lines: list[str], known: dict, products, corrections: dict) -> list[dict]:
+    ready = products is not None and products.available
+    out = []
+    for line in lines:
+        hit = products.lookup(line) if ready else {"iid": None, "score": 0.0, "products": []}
+        if hit["iid"] not in known:
+            hit["iid"], hit["score"] = None, 0.0
+        for p in hit["products"]:
+            if p["iid"] not in known:
+                p["iid"] = None
+        memory = remembered(line, corrections)
+        if memory and memory[1] is not None and memory[1] not in known:
+            memory = None
+        out.append({**hit, "memory": memory})
+    return out
+
+
+def _evidence(n: int, line: str, h: dict) -> str:
+    text = f"{n}. {line}"
+    if h["memory"]:
+        seen, iid, _ = h["memory"]
+        text += f"\n   corrected before: \"{seen}\" -> {iid or 'not food'}"
+    for p in h["products"][:2]:
+        about = ", ".join(x for x in (p["brand"], p["quantity"], p["category"]) if x)
+        text += f"\n   database: {p['name']}" + (f" ({about})" if about else "") + f" -> {p['iid'] or 'no id'}"
+    return text
+
+
+def _source_of(raw: str, lines: list[str]) -> int | None:
+    """Which OCR line a model row came from — it tidies the text, so compare
+    the words, not the strings."""
+    terms = line_terms(raw)
+    best, score = None, 0.5
+    for i, line in enumerate(lines):
+        s = similarity(terms, line_terms(line))
+        if s > score:
+            best, score = i, s
+    return best
+
+
+def _store(lines: list[str]) -> str | None:
+    """The chain's name, when one of the first lines is it: "E. LECLERC"."""
+    for line in lines[:4]:
+        if set(words(line)) & STORES and len(line) <= 30:
+            return line.title()
+    return None
+
+
+def _default_qty(iid: str | None, known: dict) -> float:
+    return 1.0 if (iid and known[iid].get("unit") == "u") else 250.0
+
+
+def _fix_quantity(row: dict, line: str, known: dict) -> None:
+    """Gemma put away 2.31 courgettes and 7.45 cl of olive oil: the prices. A
+    size printed on the line (1L, 2K5, 2X125, X6) is read by rule and wins;
+    a quantity that is just the line's price is thrown out."""
+    if not row.get("id"):
+        return
+    printed = quantity(line, known[row["id"]].get("unit", "g"))
+    if printed:
+        row["qty"] = round(printed, 2)
+        return
+    price = PRICE.search(line)
+    if price and abs(float(re.sub(r"[^\d,.]", "", price.group()).replace(",", ".")) - row["qty"]) < 0.005:
+        row["qty"] = _default_qty(row["id"], known)
+
+
+def merge(receipt: dict, lines: list[str], looked: list[dict], known: dict) -> dict:
+    """The model's answer, checked against the lookup it was shown.
+
+    Agreement raises confidence; a strong database match the model ignored
+    fills a null id but is left for the person to confirm; a disagreement with
+    a strong match is never trusted on its own."""
+    for row in receipt["lines"]:
+        i = _source_of(row["raw"], lines)
+        if i is None:
+            continue
+        h = looked[i]
+        _fix_quantity(row, lines[i], known)
+        memory = h["memory"]
+        if memory and memory[2] >= SAME_LINE:
+            row["id"], row["confidence"] = memory[1], (0.95 if memory[1] else 0.0)
+            if not memory[1]:
+                row["rejected"] = True
+            continue
+        if not h["iid"] or h["score"] < 0.5:
+            continue
+        if row["id"] is None:
+            row["id"], row["confidence"] = h["iid"], round(min(0.7, h["score"]), 2)
+            row["qty"] = _default_qty(h["iid"], known)
+            _fix_quantity(row, lines[i], known)
+        elif row["id"] == h["iid"]:
+            row["confidence"] = round(max(row["confidence"], min(0.95, 0.5 + h["score"] / 2)), 2)
+        elif h["score"] >= 0.8:
+            row["confidence"] = min(row["confidence"], 0.6)
+        if h["products"]:
+            row["product"] = " · ".join(x for x in (h["products"][0]["name"], h["products"][0]["brand"]) if x)[:80]
+    return receipt
+
+
+def from_lookup(lines: list[str], looked: list[dict], known: dict) -> dict:
+    """A receipt from the lookup alone, for when there is no model. Never
+    confident enough to skip the person on anything it merely guessed."""
+    out = []
+    for line, h in zip(lines, looked):
+        raw = PRICE.sub("", line).strip(" .-")[:80]
+        memory = h["memory"]
+        if memory and memory[2] >= SAME_LINE:
+            iid, conf = memory[1], (0.95 if memory[1] else 0.0)
+        elif h["iid"] and h["score"] >= 0.45:
+            # Below the app's 0.75: without a model to agree, a match is a
+            # suggestion, and every one waits under "Needs checking".
+            iid, conf = h["iid"], round(min(0.7, h["score"]), 2)
+        else:
+            iid, conf = None, 0.0
+        row = {"raw": raw, "id": iid, "confidence": conf,
+               "qty": round((quantity(line, known[iid].get("unit", "g")) if iid else None)
+                            or _default_qty(iid, known), 2)}
+        if memory and memory[2] >= SAME_LINE and not memory[1]:
+            row["rejected"] = True
+        if h["products"]:
+            row["product"] = " · ".join(x for x in (h["products"][0]["name"], h["products"][0]["brand"]) if x)[:80]
+        out.append(row)
+    return {"store": _store(lines) or "Receipt", "lines": out, "source": "photo", "method": "lookup"}
 
 
 def clean(out: dict, known: dict[str, dict]) -> dict:

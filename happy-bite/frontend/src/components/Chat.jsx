@@ -26,6 +26,10 @@ export function useChat(context, greeting, onAction) {
   const { server } = useUI();
   const [messages, setMessages] = useState(() => greeting ? [{ id: "hello", role: "assistant", content: greeting }] : []);
   const [busy, setBusy] = useState(false);
+  /* The guard against two sends at once. A ref, not the `busy` state: after
+     "stop Bob" the corrected question is sent straight away, before React has
+     re-rendered, and a `busy` captured in the old closure refused it. */
+  const busyRef = useRef(false);
   const abort = useRef(null);
   const live = useRef(messages);
   live.current = messages;
@@ -47,7 +51,7 @@ export function useChat(context, greeting, onAction) {
 
   const send = useCallback(async (text) => {
     const clean = String(text || "").trim();
-    if (!clean || busy) return "";
+    if (!clean || busyRef.current) return "";
     const history = [...live.current, { id: "u" + Date.now(), role: "user", content: clean }];
 
     /* Stock changes and stock questions are answered here, instantly, without
@@ -65,6 +69,7 @@ export function useChat(context, greeting, onAction) {
     }
 
     setMessages([...history, { id: "a" + Date.now(), role: "assistant", content: "", pending: true }]);
+    busyRef.current = true;
     setBusy(true);
     abort.current = new AbortController();
     let reply = "";
@@ -98,6 +103,7 @@ export function useChat(context, greeting, onAction) {
     } finally {
       if (frame.current) { cancelAnimationFrame(frame.current); flush(); }
       patchLast(() => ({ pending: false }));
+      busyRef.current = false;
       setBusy(false);
     }
     /* Wait for the speaking to FINISH, so a hands-free loop knows when it is
@@ -111,7 +117,7 @@ export function useChat(context, greeting, onAction) {
       try { await voice.speak(reply, server.voice); } catch { /* ignore */ }
     }
     return reply;
-  }, [busy, context, k.customs, k.stock, k.prefs.speakReplies, server.voice]);
+  }, [context, k.customs, k.stock, k.prefs.speakReplies, server.voice]);
 
   const stop = () => { abort.current?.abort(); sq.cancel(); voice.stopSpeaking(); };
   return { messages, send, busy, stop };

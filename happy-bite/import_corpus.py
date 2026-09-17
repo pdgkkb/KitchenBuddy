@@ -389,6 +389,10 @@ def main() -> int:
 
     known = load_catalogue(root)
     book_path = root / "shared" / "recipes.json"
+    if not book_path.is_file():
+        print(f"{R}No recipe book at {book_path}.{O} shared/recipes.json has been removed from the "
+              "project and the app no longer reads it, so there is nothing to import into.")
+        return 2
     book = json.loads(book_path.read_text(encoding="utf-8"))
     taken = {r["id"] for r in book["recipes"]}
     seen_names = {str(r["name"]).lower() for r in book["recipes"]}

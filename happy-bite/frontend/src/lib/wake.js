@@ -79,6 +79,20 @@ function findWake(phrase, words, first = false) {
   return -1;
 }
 
+/* The words of `heard` with the wake word taken out, wherever it was, and
+   whether it was there. "stop Bob" and "Bob, stop" both come back as
+   { named: true, words: ["stop"] }. */
+export function withoutWake(phrase, heard) {
+  const words = norm(heard).split(" ").filter(Boolean);
+  const end = findWake(phrase, words);
+  if (end < 0) return { named: false, words };
+  const all = norm(phrase || DEFAULT_WAKE).split(" ").filter(Boolean);
+  const len = all.length > 1 && GREETING.has(all[0]) ? all.length - 1 : all.length;
+  let start = end - len;
+  if (start > 0 && GREETING.has(words[start - 1])) start--;
+  return { named: true, words: [...words.slice(0, start), ...words.slice(end)] };
+}
+
 /* "bob" -> "Bob", for putting on the screen. */
 export const wakeLabel = (phrase) =>
   norm(phrase || DEFAULT_WAKE).replace(/\b[a-z]/g, c => c.toUpperCase());

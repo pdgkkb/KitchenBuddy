@@ -72,6 +72,36 @@ COMMON_SHARE = 0.25
 # most common of them, one at a time, until enough recipes come back.
 MAX_TERMS = 5
 
+# NAMED DISHES
+# ------------
+# "Make mochi" searched on the request AND the whole fridge list, kept the
+# rarest words — and an ingredient code like "oliveoil" is rarer in the corpus
+# than "mochi". The one reference recipe the model got for mochi was a
+# bruschetta. So a request that names a dish is searched on the dish, by title.
+#
+# What makes a word a dish rather than an ingredient is where the corpus puts
+# it: a dish is named in titles at least as often as it appears in ingredient
+# lists (mochi 1.65, carbonara 55, lasagna 1.2) and an ingredient is not
+# (courgettes 0.15, chicken 0.59, eggs 0.02). Two- and three-word names ("pad
+# thai", "egg fried rice") only have to be common titles.
+DISH_MIN_TITLES = 20
+DISH_MIN_RATIO = 1.0
+
+# Words that describe a dinner without naming one. "One pan" is 480 titles.
+NOT_A_DISH = frozenset("""
+one pan pot sheet tray skillet quick easy simple healthy light warm cold hot spicy bold mild comforting
+comfort cheap kids kid guests impress family weeknight lazy fast best favourite favorite homemade
+vegetarian vegan gluten free low carb high protein leftover leftovers drained tired exhausted minutes
+minute hour hours table time slow sunday big small little lunchbox fresh new different tasty yummy
+delicious nice good great classic simple real proper traditional authentic style
+""".split())
+# A cuisine names a dish only as part of a longer name: "pad thai", "thai green
+# curry" — never "something thai" on its own.
+CUISINES = frozenset("""
+thai italian indian mexican chinese japanese french spanish greek korean vietnamese asian
+mediterranean american british moroccan lebanese turkish
+""".split())
+
 # Words in at least this many recipes have their count stored in the index
 # (a few thousand of them). Counting "salt" live means walking a million-entry
 # posting list — seconds on a cold disk. A rarer word is cheap to count live.
@@ -212,6 +242,112 @@ class RecipeRetriever:
                 self._hits.move_to_end(key)
         return [{"title": title, "ingredients": ingredients, "instructions": instructions}
                 for title, ingredients, instructions in rows]
+
+    async def find_dish(self, text: str, stock_names: list[str] | None = None) -> dict | None:
+        """The corpus recipe for the dish `text` names, or None if it names none.
+
+        Returns the recipe row plus "dish": the name that matched. Among the
+        recipes with that name in the title, the pick is the plainest version
+        (fewest extra words in the title: "Microwave Mochi" over "Grandma's
+        Abekawa Mochi - Mochi Rice Cakes with Kinako") that the kitchen can do
+        most of, with a real method."""
+        if not self.enabled or not self.ready or not str(text or "").strip():
+            return None
+        return await asyncio.to_thread(self._find_dish, text, list(stock_names or []))
+
+    async def find_titled(self, phrase: str, stock_names: list[str] | None = None) -> dict | None:
+        """The most typical recipe titled `phrase` — no guessing whether it is a
+        dish. For a part of one they asked for by name: "pasta with bechamel"
+        gets a real bechamel to follow."""
+        if not self.enabled or not self.ready or not str(phrase or "").strip():
+            return None
+        clean = " ".join(re.findall(r"[a-z]+", _fold(str(phrase).lower())))
+        return await asyncio.to_thread(self._find_dish, clean, list(stock_names or []), clean) if clean else None
+
+    def _find_dish(self, text: str, stock_names: list[str], phrase: str | None = None) -> dict | None:
+        from . import template            # scoring lives there; imported late, it imports nothing of ours
+        with self._lock:
+            db = self._connection()
+            phrase = phrase or self._dish_phrase(db, text)
+            if not phrase:
+                return None
+            # The plainest version of the dish: shortest titles first, so
+            # "Pancakes" comes before "Potato Pancakes - Grandma Rapps Potato
+            # Pancakes". bm25 is no help — it ranks a title higher for saying
+            # the word twice — and sorting every match by length in SQL reads
+            # every title off the disk (1.4 s for 10,000 pancakes). An unordered
+            # sample of 600 has plenty of plain ones and takes a few ms.
+            rows = db.execute(
+                "SELECT title, ingredients, instructions FROM recipes_fts WHERE recipes_fts MATCH ? LIMIT 600",
+                (f'title:"{phrase}"',)).fetchall()
+        rows.sort(key=lambda r: len(r[0]))
+        from .recipes import _key_words
+        size = len(phrase.split())
+        plain, plainest = [], None
+        for title, ingredients, instructions in rows:
+            lines = template._lines(ingredients)
+            if not (3 <= len(lines) <= 16) or len(str(instructions or "")) < 150:
+                continue
+            if max(len(l) for l in lines) > 140:
+                continue                  # a scraped list run together into one line
+            extra = len([w for w in re.findall(r"[a-z]+", _fold(title.lower())) if w not in ("recipe", "the", "a")]) - size
+            plainest = extra if plainest is None else plainest
+            if extra > plainest + 1 or len(plain) >= 80:
+                break                     # past the plain versions
+            keys = {alt[0] for line in lines for alt in _key_words(line)[:1]}
+            plain.append(({"title": title, "ingredients": ingredients, "instructions": instructions}, keys, extra))
+
+        # The most TYPICAL version, not the one this kitchen can do most of.
+        # Picking by the fridge chose a carbonara made with milk and butter
+        # because the fridge had milk and butter. Each version scores the share
+        # of plain versions that use each of its ingredients, averaged: the
+        # carbonara with egg, pancetta, pecorino and pepper beats the one with
+        # cream. A version with one or two ingredients ("store-bought mochi,
+        # kinako") is thinly typical, and pays for it. Kitchen fit only breaks
+        # a tie.
+        pantry = template.pantry_words(stock_names)
+        df: dict[str, int] = {}
+        for _, keys, _ in plain:
+            for k in keys:
+                df[k] = df.get(k, 0) + 1
+        # Titles that are exactly the dish, when there are enough of them to
+        # judge: "Pancakes" over "Oven Pancakes".
+        exact = [p for p in plain if p[2] == plainest]
+        pool = exact if len(exact) >= 3 else plain
+        best, best_key = None, None
+        for row, keys, extra in pool:
+            typical = (sum(df[k] for k in keys) / len(keys) / len(plain)) * min(1.0, len(keys) / 3) if keys else 0.0
+            fit = template.score({"ingredients": row["ingredients"]}, pantry)["ratio"] if pantry else 0.0
+            key = (round(typical, 2), round(fit, 1), len(str(row["instructions"])) >= 300, -extra)
+            if best_key is None or key > best_key:
+                best, best_key = row, key
+        return {**best, "dish": phrase} if best else None
+
+    def _dish_phrase(self, db: sqlite3.Connection, text: str) -> str | None:
+        words = re.findall(r"[a-z]+", _fold(str(text).lower()))
+        # Runs of words that could be part of a name; "chicken AND rice" is two
+        # runs, "chicken curry" is one.
+        runs, run = [], []
+        for w in words:
+            if len(w) > 1 and w not in STOPWORDS and w not in NOT_A_DISH:
+                run.append(w)
+            elif run:
+                runs.append(run); run = []
+        if run:
+            runs.append(run)
+        count = lambda q: db.execute("SELECT count(*) FROM recipes_fts WHERE recipes_fts MATCH ?", (q,)).fetchone()[0]
+        for n in (3, 2, 1):
+            for run in runs:
+                for i in range(len(run) - n + 1):
+                    phrase = " ".join(run[i:i + n])
+                    if all(w in CUISINES for w in run[i:i + n]):
+                        continue
+                    titles = count(f'title:"{phrase}"')
+                    if titles < DISH_MIN_TITLES:
+                        continue
+                    if n > 1 or titles >= DISH_MIN_RATIO * count(f'ingredients:"{phrase}"'):
+                        return phrase
+        return None
 
     def _connection(self) -> sqlite3.Connection:
         if self._db is None:

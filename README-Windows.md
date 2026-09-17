@@ -372,6 +372,7 @@ the house) leave the machine.
 | `IMAGE_PREFETCH` | `true` | queue photos when a recipe is opened |
 | **Other** | | |
 | `OCR_LANGUAGES` | `fra+eng` | tesseract language packs for receipts |
+| `PRODUCTS_INDEX` | *(blank)* | product database for receipts; blank = `backend/media/products.sqlite3` |
 | `ALLOWED_ORIGINS` | `http://localhost:5173` | CORS, comma-separated |
 | `MEDIA_DIR` | `media` | photos, queues and indexes (relative to `backend\`) |
 
@@ -384,9 +385,46 @@ The MLX-only settings (`STT_ENGINE`, `PARAKEET_MODEL`, `MLX_WHISPER_MODEL`,
 
 ### The five screens
 
-**Today** (tonight's dish), **Kitchen** (stock and expiry), **Recipes** (seed
-recipes plus your saved ones), **Receipt**, **Shopping** — plus the chef chat and
+**Today** (tonight's dish), **Kitchen** (stock and expiry), **Recipes** (the ones you
+have saved — the book starts empty), **Receipt**, **Shopping** — plus the chef chat and
 cooking mode on top.
+
+### Choosing from your recipes
+
+"Something else" on Today — or *"Bob, let's cook"* with no dish named — deals
+**three cards** from your recipe book, like the upgrade screen in a survivors
+game: photo, name, time and difficulty on each. The first hand is the best three
+for what's in the kitchen; **Reroll** deals three others. On a keyboard, `1` `2`
+`3` pick a card and `R` rerolls. With fewer than three recipes in the book, the
+empty places offer to write a new one.
+
+What opens it: **Something else** on Today, **Pick something to cook** in the
+history, or saying *"let's cook"*, *"start cooking"* or just *"cook"* with no dish
+named and no recipe open. The cards come from your saved recipes, so the book needs
+at least one. A request with *"something"*, *"dinner"*, *"meal"* or *"recipe"* in
+it (*"make me something for dinner"*) writes a new recipe instead.
+([`sheets/Pick.jsx`](happy-bite/frontend/src/sheets/Pick.jsx))
+
+### Difficulty in stars
+
+Every recipe is rated from **½ to 5 stars** in half steps. The app works the
+rating out from the method; the model is not asked. Four things count:
+
+| | Weight | From | To |
+|---|---|---|---|
+| Ingredients (a seasoning counts half) | 30 % | 1 | 15 or more |
+| Ingredients going in at the busiest step | 20 % | 1 | 6 or more |
+| Things to wash (pans, pot, wok, bowl, baking dish, board and knife, grater, colander, blender, mixer, rolling pin) | 25 % | 1 | 7 or more |
+| Total time (each extra minute counts less as the dish gets longer) | 25 % | 5 min | 3 hours |
+
+An egg fried in one pan is ½, a plain omelette 1, a stir-fry with rice 2½, a
+lasagne 4. Technique on its own is not counted: croissants score on their hours
+and rolling pin, not the lamination. Recipes already saved are re-rated when
+they are shown. The same formula is in
+[`recipes.stars_from_method`](happy-bite/backend/app/recipes.py) and
+[`engine.starsFromMethod`](happy-bite/frontend/src/core/engine.js) — change both
+together. A recipe with no method (a two-line idea) keeps the model's estimate;
+`complexity` (1–3) is still kept underneath for the Effort filter.
 
 ### "I'm drained. Give me 15 minutes."
 
@@ -417,13 +455,20 @@ for 12 minutes"*.
 
 ### Recipe writing
 
+Above the request box: **From my kitchen** (the default) or **Any ingredients**.
+*Any ingredients* writes the best dish for the request rather than the best one
+the shelves allow: the kitchen is still listed to the model but only used where
+it fits, the nothing-to-buy rule for quick dinners is off, the template step
+below is skipped, and whatever you haven't got goes on the shopping list.
+(`anyIngredients` on `POST /api/recipes/generate`.)
+
 1. **A time limit.** Every request gets one, read from what was asked
    (`recipes.time_budget`): **20 minutes** by default, **15** for "I'm drained",
    "tired" or "quick", the number they give ("give me 15 minutes", "half an
    hour"), and **no limit** when they ask for something slow ("a slow Sunday
    roast", the "Take our time" chip). The limit goes into the prompt as its most
    important rule; for 30 minutes or less the recipe must also use only what is
-   in the kitchen. `POST /api/recipes/generate` accepts `maxMinutes` to set it
+   in the kitchen (unless *Any ingredients* is on). `POST /api/recipes/generate` accepts `maxMinutes` to set it
    directly.
 2. **Template first** — but not for a quick dinner.
    [`app/template.py`](happy-bite/backend/app/template.py) looks for a corpus
@@ -483,16 +528,75 @@ set `PREFETCH_ENABLED=false`.
 
 ### Receipts
 
-[`app/receipt.py`](happy-bite/backend/app/receipt.py): **tesseract** reads the
-photo into text, then the chat model maps lines like `PLT FERM X6` to catalogue
-items. No vision model needed. Unknown ids land in "needs a look", prices are not
-mistaken for quantities, and corrections you have made before are applied first.
+**Receipt** tab → **Photograph a receipt**. The photo goes to the server, and the
+lines come back sorted into *Matched*, *Needs checking* and *Not food*. Tap a line
+to fix it; a fix is remembered and applied to every later receipt. **Use a sample
+receipt** still works without the server.
+
+Nothing is trained for this. It uses two ready-made models and a database search:
+
+| Step | What it is | What it does |
+|---|---|---|
+| 1. **Tesseract** | free, open-source OCR — a small neural network already trained to read printed letters; runs on your machine | photo → `CRF LT DEMI ECR 1L 1,09` |
+| 2. **Product lookup** | a search, not a model: real products from [Open Food Facts](https://world.openfoodfacts.org), plus the lines you have corrected before | `CRF LT DEMI ECR` → *Lait demi-écrémé, Carrefour → `milk`* |
+| 3. **The chat model** | the one in LM Studio or Ollama | reads each line with what the lookup found, decides the ingredient and quantity |
+
 The backend finds Tesseract in `C:\Program Files\Tesseract-OCR` even when it isn't
 on PATH. Select the French language data in the installer for French receipts.
 
-> **Not connected in the UI yet.** `POST /api/receipt/read` works, but the Receipt
-> tab's `onFile` in [`screens/Receipt.jsx`](happy-bite/frontend/src/screens/Receipt.jsx)
-> still replays the sample receipt.
+**How a line is looked up**
+([`app/products.py`](happy-bite/backend/app/products.py)). Prices and sizes are
+dropped and common till abbreviations spelled out (`CRF` carrefour, `LT` lait,
+`PDT` pomme de terre). The database is searched by **fragments of words** rather
+than whole words, accents ignored, so `ECR` finds *écrémé* and `POUL` finds
+*poulet*. The candidates are then scored word by word: the same word scores
+highest, the start of a word (`POUL`) next, the consonants of a word (`BLC`
+blanc, `FRMG` fromage) after that. Lines you corrected by hand before are
+compared the same way, so a fix for `CRF LT DEMI ECR 1L` also covers
+`CRF LAIT DEMI ECR 50CL`.
+
+**What the model is shown**, per line:
+
+```
+3. CRF LT DEMI ECR 1L 1,09
+   corrected before: "CRF LT DEMI ECR 1L" -> milk
+   database: Lait demi-écrémé (Carrefour, 1 L, Semi-skimmed milks) -> milk
+```
+
+plus the ingredient ids the lookup found and as many others as fit the context
+window.
+
+**How much its answer is trusted**
+([`app/receipt.py`](happy-bite/backend/app/receipt.py)):
+
+| Situation | Result |
+|---|---|
+| model and database agree | confidence goes up |
+| model gave no id, database fairly sure | the database's item, marked **Check** |
+| model disagrees with a strong database match | marked **Check** |
+| line almost exactly one you corrected before | your correction, no question |
+
+With the model off, or if it fails, the lookup alone still produces the receipt;
+its confidence is capped, so a guess always lands in *Needs checking*. Prices are
+never read as quantities, and anything not in the catalogue comes back as a null
+id for you to map.
+
+**Building the product database** — once, from the `happy-bite` folder:
+
+```
+python import_openfoodfacts.py --download
+```
+
+It downloads the Open Food Facts export (~1.3 GB, resumes if interrupted), keeps
+the products sold in France, and writes `backend/media/products.sqlite3`
+(about 480,000 products, 120 MB; the build itself takes about a minute and a half). Delete
+`backend/media/openfoodfacts-products.csv.gz` afterwards; nothing needs the
+internet after that. Each product gets its catalogue ingredient from its Open Food
+Facts **categories**, which are in English like the catalogue:
+*semi-skimmed-milks* → `milk`, *goat-cheeses* → `goat`. Rebuild after the
+catalogue gains ingredients. `--country en:belgium` (repeatable) for other
+countries, `--limit 200000` for a quick trial. Without the database, receipts are
+read by the model alone.
 
 ### Importing from a website
 
@@ -627,7 +731,6 @@ already on disk always show. To paint on demand, set `IMAGE_PROVIDER=local` and
 | File | In git | Role |
 |---|---|---|
 | `shared\catalog.json` | yes | every ingredient the app knows (ids, categories, units) |
-| `shared\recipes.json` | yes | curated seed recipes shown in Recipes |
 | `shared\receipt-sample.json` | yes | the sample receipt |
 | `shared\kaiser_recipes.jsonl` | **no** (~2.6 GB) | source corpus for RAG and templates — a JSONL export of [`Kaiser1308/CookingRecipes`](https://huggingface.co/datasets/Kaiser1308/CookingRecipes) |
 
@@ -638,15 +741,12 @@ Maintenance scripts (run from `happy-bite\` with the backend venv active):
 
 ```powershell
 python build_catalogue.py --dry        # add corpus ingredients to catalog.json; --dry writes nothing
-python import_corpus.py --count 79     # restructure corpus recipes into app recipes with your model (--dry)
-python ..\audit.py                     # read shared\recipes.json as a cook would and list faults
 ```
 
 `build_catalogue.py` never changes an existing entry (your stock points at those
 ids); new entries are marked `"added": "corpus"` with a usage count so the prompt
-can send only the most useful ones. `import_corpus.py` is slow on purpose (about a
-minute a recipe on a 4B model), saves after each accepted recipe and can be
-resumed.
+can send only the most useful ones. (`import_corpus.py` filled the old recipe
+book, `shared/recipes.json`, which has been removed; it now stops and says so.)
 
 ---
 
@@ -698,7 +798,6 @@ time (a demo, say), save that recipe in the book instead.
 | `.\run.ps1` | `happy-bite\backend` | missing packages, whether torch sees CUDA, whether ffmpeg is on PATH |
 | `python check_voice.py` | `happy-bite\backend` (server stopped) | full trace of a speak → encode → hear round trip; saves `voice-check.wav` |
 | `python check_model.py` | repo root | what your model server is really doing: model loaded, tokens/s, whether it reasons, time for a real recipe (reads `backend\.env`; `--url`, `--model`, `--budget`, `--wait`) |
-| `python audit.py` | repo root | faults in the seed recipes |
 | `npm test` | `happy-bite\frontend` | engine, wake word, stock commands and cooking-window tests |
 | `nvidia-smi` | anywhere | how much VRAM each model server is holding |
 
@@ -710,7 +809,7 @@ time (a demo, say), save that recipe in the book instead.
 KitchenBuddy\
 ├── README.md                       macOS guide
 ├── README-Windows.md               Windows guide (this file)
-├── audit.py, check_model.py        diagnostics
+├── check_model.py                  diagnostics
 ├── data\                           standalone ChromaDB data engine prototype (see data\README_DATA.md)
 └── happy-bite\
     ├── backend\
@@ -729,6 +828,7 @@ KitchenBuddy\
     │   │   ├── adapt.py            equipment adaptation
     │   │   ├── importer.py         recipe import from URLs
     │   │   ├── receipt.py          OCR + model receipt parsing
+    │   │   ├── products.py         receipt lines looked up in Open Food Facts
     │   │   ├── prefetch.py         pre-answered cooking questions
     │   │   ├── imagestore.py       recipe photo store
     │   │   ├── photoqueue.py       queue for tools\make_photos.py
@@ -753,9 +853,10 @@ KitchenBuddy\
     │   ├── public\                 icon, manifest, service worker
     │   ├── dist\                   production build (npm run build)
     │   └── node_modules\           npm install, not in git
-    ├── shared\                     catalogue, seed recipes, corpus (corpus not in git)
+    ├── shared\                     catalogue, receipt sample, corpus (corpus not in git)
     ├── training\                   optional LoRA / QLoRA fine-tuning
     ├── build_catalogue.py
+    ├── import_openfoodfacts.py  builds the product database for receipts
     └── import_corpus.py
 ```
 
@@ -790,8 +891,11 @@ KitchenBuddy\
 
 ## Known limitations
 
-- **Receipt scanning in the app is simulated** — the server can read receipts, the
-  Receipt tab doesn't call it yet.
+- **Receipts** are only as good as the photo Tesseract gets: flat, lit, filling the
+  frame. An abbreviation that is neither the start of a word nor its consonants
+  (`BAS`) matches weakly until you correct it once. Product categories map to the
+  nearest catalogue ingredient, so processed foods are approximate (skyr comes
+  back as cheese).
 - **Wake word** is on by default and uses the browser's cloud speech recogniser
   while armed.
 - **Small local models** follow the recipe rules most of the time, not always:
@@ -805,3 +909,5 @@ KitchenBuddy\
 - **Cooking mode walks the original steps**, not an equipment adaptation.
 - **Fine-tuning** has scripts and self-tests but has not been run end to end in
   this repo.
+
+

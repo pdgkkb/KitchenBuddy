@@ -17,6 +17,9 @@ if not path.is_file():
     for guess in ("shared/recipes.json", "happy-bite/shared/recipes.json", "recipes.json"):
         if Path(guess).is_file():
             path = Path(guess); break
+if not path.is_file():
+    sys.exit(f"No recipe book at {path}. shared/recipes.json has been removed from the project; "
+             "pass the path of a recipes file to audit one.")
 d = json.loads(path.read_text(encoding="utf-8"))
 
 PROSE = {"oliveoil": "oil", "blackpepper": "pepper", "limejuice": "lime",

@@ -21,9 +21,10 @@ def catalog() -> dict:
     return json.loads((ROOT / "shared" / "catalog.json").read_text("utf-8"))
 
 
-@lru_cache
-def recipe_book() -> dict:
-    return json.loads((ROOT / "shared" / "recipes.json").read_text("utf-8"))
+# The cuisines the "understand" step may name. They used to be read from the
+# recipes in shared/recipes.json, which no longer exists.
+CUISINES = ["British", "Chinese", "Everyday", "French", "Greek", "Indian", "Italian", "Japanese",
+            "Korean", "Levantine", "Mexican", "Spanish", "Thai", "Vietnamese"]
 
 
 def ingredients(extra: dict | None = None) -> dict[str, dict]:

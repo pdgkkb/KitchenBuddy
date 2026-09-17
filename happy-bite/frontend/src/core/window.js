@@ -19,10 +19,16 @@
    - Simmering, boiling, baking, resting: the whole step less a minute to get
      back to the pan, up to ten minutes. */
 
-import { ref } from "./engine.js";
+import { ref, stepMinutes } from "./engine.js";
+import { stepHeat } from "./brief.js";
 
 const ACTIVE = /\b(fry|fries|frying|fried|stir|saut|sear|scrambl|toss|toast|brown|carameli[sz]|wilt)/i;
-const PASSIVE = /\b(simmer|boil|bak|roast|steam|rest|poach|brais|oven|grill|marinat|soak|chill|stand|reduc|cook|heat)/i;
+// Waiting with no heat on: the only gaps a step without a heat can have.
+const RESTING = /\b(rest|marinat|soak|chill|stand|sit|leave|prove|cool)/i;
+// Prep worth doing ahead. "to serve" isn't a job.
+const PREP_JOB = /(chop|slic|dic|cut|minc|grat|crush|peel|halv|juic|drain|beat|whisk|trim|shred|quarter|rinse|wash)/i;
+// "In a frying pan" names a pan; it doesn't mean the step is frying.
+const withoutPans = (text) => String(text || "").replace(/\bfrying pan\b/gi, "pan");
 const CUT = /\b(chop|slice|dice|cut|mince|grate|peel|trim|halve|shred|crush|julienne|slic|dic)/i;
 const BOWL = /\b(whisk|beat|crack|mix|combine)/i;
 const FRIDGE = new Set(["dairy", "meat", "seafood"]);
@@ -30,22 +36,32 @@ const FRIDGE = new Set(["dairy", "meat", "seafood"]);
 const STIR_GAP = 90;
 const MAX_GAP = 600;
 
-/* idleWindow(recipe, i, done) -> null | { seconds, active, key, task, say }
+/* idleWindow(recipe, i, done, { hasLeftover }) -> null | { seconds, active, key, task, say }
    `done` is the keys of jobs already handed out this session, so the same
-   chore isn't suggested on every step. */
-export function idleWindow(recipe, i, done = []) {
+   chore isn't suggested on every step. `hasLeftover(id)` says whether any of
+   an ingredient is left after this recipe — without it, nothing is sent back
+   to the fridge, because "put the cod back" after all of it went in the pan
+   is a job that doesn't exist.
+
+   A gap needs something to wait FOR: a heat under the step, or resting,
+   marinating, soaking. "Take the cooked rice out and break it up" is three
+   minutes of work, not three minutes of waiting, whatever "cooked" says. */
+export function idleWindow(recipe, i, done = [], opts = {}) {
   const steps = recipe?.steps || [];
   const step = steps[i];
-  if (!step || !(step.minutes >= 3)) return null;
-  const active = ACTIVE.test(step.do || "");
-  if (!active && !PASSIVE.test(`${step.do || ""} ${step.heat || ""}`) && !step.heat) return null;
+  const minutes = stepMinutes(step);
+  if (!step || !(minutes >= 3)) return null;
+  const text = withoutPans(step.do);
+  const heated = !!stepHeat(step);
+  const active = heated && ACTIVE.test(text);
+  if (!heated && !RESTING.test(text)) return null;
 
   const seconds = active
     ? STIR_GAP
-    : Math.min(MAX_GAP, Math.floor((step.minutes * 60 - 60) / 30) * 30);
+    : Math.min(MAX_GAP, Math.floor((minutes * 60 - 60) / 30) * 30);
   if (seconds < 60) return null;
 
-  const job = jobs(recipe, i, seconds).find(j => !done.includes(j.key));
+  const job = jobs(recipe, i, seconds, opts).find(j => !done.includes(j.key));
   if (!job) return null;
   return { seconds, active, key: job.key, task: job.text, say: `You have a ${windowLabel(seconds)} window. ${job.text}` };
 }
@@ -56,7 +72,7 @@ export function windowLabel(seconds) {
 }
 
 /* In order of how much they shorten the evening. */
-function jobs(recipe, i, seconds) {
+function jobs(recipe, i, seconds, { hasLeftover } = {}) {
   const steps = recipe.steps || [];
   const needs = recipe.needs || [];
   const name = (id) => (ref(id).name || String(id).replace(/^c_/, "").replace(/_/g, " ")).toLowerCase();
@@ -73,7 +89,7 @@ function jobs(recipe, i, seconds) {
   if (next && seconds >= STIR_GAP) {
     for (const id of next.uses || []) {
       const need = needs.find(n => n.id === id);
-      if (need?.prep && !usedSoFar.has(id) && !named(id)) {
+      if (need?.prep && PREP_JOB.test(need.prep) && !usedSoFar.has(id) && !named(id)) {
         out.push({ key: `prep:${id}`, text: `Get the ${name(id)} ${need.prep.toLowerCase()} for the next step.` });
         break;
       }
@@ -86,7 +102,7 @@ function jobs(recipe, i, seconds) {
   if (cut) out.push({ key: "knife", text: "Rinse the knife and the cutting board." });
   if (sofar.some(s => BOWL.test(s.do || ""))) out.push({ key: "bowl", text: "Rinse the bowl and put it away." });
 
-  const chilled = [...usedSoFar].filter(id => FRIDGE.has(ref(id).category));
+  const chilled = [...usedSoFar].filter(id => FRIDGE.has(ref(id).category) && hasLeftover?.(id));
   if (chilled.length) {
     const names = chilled.slice(0, 2).map(name);
     out.push({ key: `fridge:${chilled.join(",")}`, text: `Put the ${names.join(" and ")} back in the fridge.` });

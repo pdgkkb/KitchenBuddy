@@ -8,17 +8,17 @@ import { useEffect, useMemo, useState } from "react";
 import * as E from "../core/engine.js";
 import { parse } from "../core/intent.js";
 import * as api from "../lib/api.js";
-import { MEAL_TYPES, COMPLEXITY } from "../data/index.js";
+import { MEAL_TYPES } from "../data/index.js";
 import { useKitchen } from "../state/kitchen.jsx";
 import { useUI } from "../state/ui.jsx";
 import { DishImage } from "../components/Chrome.jsx";
 import { Icon } from "../components/Icon.jsx";
 import { Ring, RingStack, SparkBars, WeekStrip } from "../components/Charts.jsx";
+import Stars from "../components/Stars.jsx";
 
 export const nameOf = (id) => E.ref(id).name || id;
-const DRAINED = "I'm drained. Give me 15 minutes.";
+
 export const listOf = (ids) => ids.map(nameOf).join(", ");
-export const effortName = (n) => (COMPLEXITY.find(c => c.level === n) || {}).name || "";
 
 export default function Today() {
   const { k, toggleDiner, setFilter } = useKitchen();
@@ -45,18 +45,6 @@ export default function Today() {
   const summary = useMemo(() => E.kitchenSummary({ ...k, shopping }), [k, shopping]);
 
   const reset = () => { setSurprised(null); setAllowIncomplete(false); };
-
-  /* The whole evening in one tap: no questions, one dish, from what's here,
-     on the table in fifteen minutes. With the assistant off it can't write
-     one, so it does the next best thing — the book, under fifteen minutes. */
-  const drained = () => {
-    if (ui.server.recipes) {
-      ui.openSheet("create", { autoGenerate: true, initialBrief: DRAINED, maxMinutes: 15 });
-      return;
-    }
-    reset();
-    setAsk({ filters: { maxMinutes: 15, maxComplexity: 1 }, avoid: [], understood: ["under 15 min", "easy"], source: "local" });
-  };
 
   async function applyAsk(text) {
     if (!text.trim()) return;
@@ -98,16 +86,13 @@ export default function Today() {
           <h1 className="screen-title">Tonight</h1>
         </div>
         <div className="head-actions">
+          <button className="icon-btn" onClick={() => ui.openSheet("history")} aria-label="What you've cooked"><Icon name="book" /></button>
           <button className="icon-btn" onClick={() => ui.openSheet("table")} aria-label="Who's eating"><Icon name="people" /></button>
           <button className="icon-btn" onClick={() => ui.openSheet("server")} aria-label="Assistant and voice"><Icon name="gear" /></button>
         </div>
       </header>
 
       <WeekStrip week={summary.week} />
-
-      <button className="btn btn-primary drained-btn" onClick={drained}>
-        <Icon name="clock" size={22} /> {DRAINED}
-      </button>
 
       <div className="askbar">
         <input className="askbar-input" value={askText} placeholder="What do you feel like eating?"
@@ -172,7 +157,7 @@ export default function Today() {
 
           <div className="row-actions">
             <button className="btn btn-primary" onClick={() => ui.openSheet("recipe", { id: pick.recipe.id })}>Cook this</button>
-            <button className="btn btn-ghost" onClick={() => ui.openSheet("alternates", { list: proposal.alternates })}>Something else</button>
+            <button className="btn btn-ghost" onClick={() => ui.openSheet("pick", { people: ctx.people, diners: ctx.diners, filters: ctx.filters })}>Something else</button>
           </div>
           <div className="row-links">
             <button className="link" onClick={() => ui.openSheet("adjust")}><Icon name="sliders" size={20} /> Adjust</button>
@@ -195,8 +180,8 @@ export default function Today() {
 export function DishTags({ recipe }) {
   return (
     <p className="tags">
-      <span className="tag"><Icon name="clock" size={18} />{recipe.minutes} min</span>
-      <span className="tag"><Icon name="flame" size={18} />{effortName(recipe.complexity)}</span>
+      <span className="tag"><Icon name="clock" size={18} />{E.minutesOf(recipe)} min</span>
+      <span className="tag"><Stars recipe={recipe} size={17} /></span>
       <span className="tag">{recipe.cuisine}</span>
       {recipe.origin && <span className="tag tag-mint">{recipe.origin === "link" ? "From a link" : "Yours"}</span>}
     </p>
@@ -222,7 +207,7 @@ function FilterPills({ filters: f, avoid, onDrop }) {
   const out = [];
   if (f.mealType) out.push(["mealType", MEAL_TYPES.find(m => m.id === f.mealType)?.name]);
   if (f.maxMinutes) out.push(["maxMinutes", "under " + f.maxMinutes + " min"]);
-  if (f.maxComplexity && f.maxComplexity < 3) out.push(["maxComplexity", effortName(f.maxComplexity)]);
+  if (f.maxComplexity && f.maxComplexity < 3) out.push(["maxComplexity", `up to ${E.STARS_FOR_COMPLEXITY[f.maxComplexity]} stars`]);
   if (f.cuisine) out.push(["cuisine", f.cuisine]);
   if (f.mustUse) out.push(["mustUse", "with " + nameOf(f.mustUse).toLowerCase()]);
   if (avoid?.length) out.push(["__avoid", "without " + listOf(avoid).toLowerCase()]);
@@ -304,12 +289,12 @@ function Dashboard({ summary: s }) {
           <span className="tile-value">{s.ready}</span>
           <span className="tile-sub">of {s.bookSize} recipes, with what's here</span>
         </button>
-        <div className="tile">
+        <button className="tile" onClick={() => ui.openSheet("history")}>
           <span className="tile-label">Cooked this week</span>
           <span className="tile-value">{s.cookedThisWeek}</span>
           <SparkBars values={s.week.map(d => d.cooked)} color="var(--sky)" />
-          <span className="tile-sub">meals, last 7 days</span>
-        </div>
+          <span className="tile-sub">meals, last 7 days — see all</span>
+        </button>
       </div>
     </section>
   );

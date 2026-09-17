@@ -15,14 +15,18 @@ import { useUI } from "../state/ui.jsx";
 import { DishImage } from "../components/Chrome.jsx";
 import { Icon } from "../components/Icon.jsx";
 import PhotoStrip from "../components/PhotoStrip.jsx";
+import Stars from "../components/Stars.jsx";
 import Waiting, { METHOD_STAGES, LINK_STAGES } from "../components/Waiting.jsx";
 import { RecipeDetails, RecipeMethod, PhotoButton } from "./RecipeSheet.jsx";
 import "../styles/draft.css";
 
-export function CreateSheet({ options: initialOptions = null, autoGenerate = false, initialBrief = "", maxMinutes = null }) {
+export function CreateSheet({ options: initialOptions = null, autoGenerate = false, initialBrief = "", maxMinutes = null,
+                              anyIngredients: initialAny = false }) {
   const { k } = useKitchen();
   const ui = useUI();
   const [brief, setBrief] = useState(initialBrief);
+  // Off: built from what's in the kitchen. On: any dish, the rest gets bought.
+  const [anyIngredients, setAnyIngredients] = useState(initialAny);
   const [options, setOptions] = useState(initialOptions);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -84,7 +88,7 @@ export function CreateSheet({ options: initialOptions = null, autoGenerate = fal
       const { recipe } = await api.generateRecipeStream({
         options: false,
         brief: brief || "Something good for tonight", stock: stockForServer(k.stock),
-        serves: k.diners.length || 4, custom: k.customs,
+        serves: k.diners.length || 4, custom: k.customs, anyIngredients,
         // Only when the brief is still the one it came with. Edited, the
         // server reads the time out of the new words instead.
         ...(maxMinutes && brief === initialBrief ? { maxMinutes } : {})
@@ -112,7 +116,7 @@ export function CreateSheet({ options: initialOptions = null, autoGenerate = fal
       const { recipe } = await api.generateRecipeStream({
         options: false,
         brief: `Write the full recipe for this chosen idea: ${idea.name}. ${idea.description}`,
-        stock: stockForServer(k.stock), serves: k.diners.length || 4, custom: k.customs
+        stock: stockForServer(k.stock), serves: k.diners.length || 4, custom: k.customs, anyIngredients
       }, setStage);
       setBusy(false);
       ui.openSheet("draft", { draft: recipe });
@@ -140,13 +144,23 @@ export function CreateSheet({ options: initialOptions = null, autoGenerate = fal
   return (
     <>
       <p className="sub-note">{on
-        ? "The assistant writes this from what's in your kitchen, using what goes off first."
+        ? (anyIngredients
+          ? "The assistant writes whatever suits the request. Anything you haven't got goes on the shopping list."
+          : "The assistant writes this from what's in your kitchen, using what goes off first.")
         : "The assistant is switched off. Start the server to create a new recipe."}</p>
       {!on && <div className="band is-warm">
         <b>{ui.server.online ? "Chef model unavailable" : "Backend not reachable"}</b>
         <span>{ui.server.online ? "Check the assistant settings or model configuration." : "Start the backend on port 8000, then check again."}</span>
         <button className="btn btn-small btn-ghost" onClick={ui.refreshServer}>Check again</button>
       </div>}
+      {on && (
+        <div className="chips" role="group" aria-label="Ingredients" style={{ marginBottom: 16 }}>
+          <button className={`chip chip-sm${anyIngredients ? "" : " is-on"}`} aria-pressed={!anyIngredients}
+                  onClick={() => setAnyIngredients(false)}>From my kitchen</button>
+          <button className={`chip chip-sm${anyIngredients ? " is-on" : ""}`} aria-pressed={anyIngredients}
+                  onClick={() => setAnyIngredients(true)}>Any ingredients</button>
+        </div>
+      )}
       <label className="field-label" htmlFor="brief">What do you want?</label>
       <textarea id="brief" className="field field-area" rows={3} value={brief} onChange={(e) => setBrief(e.target.value)}
                 placeholder={on ? (soon.length ? `Something warm with the ${soon[0]} before it goes` : "Something comforting, 30 minutes") : "Name it, or leave blank"} />
@@ -177,7 +191,7 @@ function RecipeOptions({ options, onChoose, onBack }) {
                 <strong>{recipe.name}</strong>
                 <span>{recipe.description || `${recipe.cuisine} · ${recipe.minutes} minutes`}</span>
                 <small>{recipe.needs.slice(0, 4).map(n => E.ref(n.id).name).join(" · ")}</small>
-                <small>Difficulty: {recipe.complexity === 1 ? "Easy" : recipe.complexity === 3 ? "Involved" : "Some work"}</small>
+                <small>Difficulty <Stars recipe={recipe} size={15} /></small>
               </span>
               <Icon name="next" size={22} />
             </button>
@@ -301,8 +315,9 @@ export function DraftSheet({ draft, method }) {
           <input className="draft-name" value={name} aria-label="Name of this recipe"
                  placeholder="Name this dish" onChange={(e) => setName(e.target.value)} />
           <p className="draft-meta">
-            {draft.minutes > 0 && <span className="draft-pill"><Icon name="clock" size={15} /> {draft.minutes} min</span>}
+            {E.minutesOf(draft) > 0 && <span className="draft-pill"><Icon name="clock" size={15} /> {E.minutesOf(draft)} min</span>}
             <span className="draft-pill"><Icon name="people" size={15} /> Serves {serves}</span>
+            <span className="draft-pill"><Stars recipe={draft} size={15} /></span>
             {draft.cuisine && <span className="draft-pill">{draft.cuisine}</span>}
             {draft.steps?.length > 0 && <span className="draft-pill"><Icon name="list" size={15} /> {draft.steps.length} steps</span>}
           </p>

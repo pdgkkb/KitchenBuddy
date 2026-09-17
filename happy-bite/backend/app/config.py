@@ -218,6 +218,10 @@ class Settings(BaseSettings):
 
     # Reading till receipts (see app/receipt.py)
     ocr_languages: str = "fra+eng"                   # tesseract language packs
+    # Open Food Facts products that receipt lines are matched against, built by
+    # import_openfoodfacts.py. Blank = backend/media/products.sqlite3. Missing
+    # is fine: receipts are then read by the model alone.
+    products_index: str = ""
 
     allowed_origins: str = "http://localhost:5173"
     media_dir: str = "media"
@@ -234,6 +238,10 @@ class Settings(BaseSettings):
     @property
     def rag_index_path(self) -> Path:
         return Path(self.rag_index) if self.rag_index else self.media_path / "recipe-rag.sqlite3"
+
+    @property
+    def products_index_path(self) -> Path:
+        return Path(self.products_index) if self.products_index else self.media_path / "products.sqlite3"
 
     @property
     def origins(self) -> list[str]:

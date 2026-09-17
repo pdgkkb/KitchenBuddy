@@ -24,11 +24,11 @@ from pydantic import BaseModel, Field
 from . import actions, prompts, template
 from . import context as context_window
 from .actions import KITCHEN_TOOLS
-from .catalog import id_list, ids_budget, ingredients, recipe_book
+from .catalog import CUISINES, id_list, ids_budget, ingredients
 from .config import settings
 from .importer import ImportErrorPublic, fetch, plain_recipe, read_page
-from .recipes import (RECIPE_IDEAS_SCHEMA, RECIPE_OPTIONS_SCHEMA, RECIPE_SCHEMA, clean_recipe,
-                      recipe_problems, time_budget)
+from .recipes import (COMPONENTS, RECIPE_IDEAS_SCHEMA, RECIPE_OPTIONS_SCHEMA, RECIPE_SCHEMA, _as_known_id, asked_foods, clean_recipe,
+                      clean_stars, recipe_problems, time_budget)
 
 router = APIRouter(prefix="/api")
 URL_RX = re.compile(r"https?://[^\s<>\"']+")
@@ -121,6 +121,10 @@ class GenerateIn(Known):
     # "give me 15 minutes", "I'm drained" — and is 20 when the brief says
     # nothing. See recipes.time_budget.
     maxMinutes: int | None = Field(None, ge=5, le=600)
+    # "Any ingredients": the best dish for the request, not the best one the
+    # shelves can make. Nothing is held back for being out of stock; what is
+    # missing goes on the shopping list.
+    anyIngredients: bool = False
 
 
 class ImportIn(Known):
@@ -239,17 +243,61 @@ async def _write_recipe(body: GenerateIn, request: Request):
                       for s_ in body.stock if s_.id in known and s_.qty is not None)
     user = body.brief or "Something good for tonight."
     asked = " ".join([body.brief] + [m.content for m in body.conversation if m.role == "user"])
-    budget = time_budget(asked, body.maxMinutes)
     in_kitchen = {s_.id for s_ in body.stock if s_.id in known and (s_.qty is None or s_.qty > 0)}
+    free = body.anyIngredients
+
+    yield "stage", "corpus"
+    rag = svc(request, "rag")
+    stock_names = [str(known[s_.id].get("name", s_.id)) for s_ in body.stock if s_.id in known]
+
+    # ---- Did they name a dish? ------------------------------------------------
+    # "Make mochi" is searched on "mochi", by title — not on the request plus
+    # the whole fridge, which once handed the model a bruschetta as its
+    # reference for mochi. See rag.find_dish. A named dish gets its real
+    # method in the prompt, the time it really takes, and whatever it needs
+    # that the kitchen hasn't got goes on the shopping list.
+    dish = await rag.find_dish(asked, stock_names) if rag else None
+    if dish:
+        print(f"recipes: they asked for {dish['dish']!r} — following {dish['title']!r}")
+    # The foods they named must be in it — see recipes.asked_foods. Said to the
+    # model up front, and checked afterwards like everything else.
+    wanted = asked_foods(asked, known)
+    # A sauce or component they named, that a small model may not know how to
+    # make — "bechamel" came back as a creamy tomato sauce, twice, even when
+    # told. It gets a real recipe for that part. One, to keep the prompt short.
+    part = None
+    if rag and not dish:
+        for w in wanted:
+            if w in COMPONENTS or w.rstrip("s") in COMPONENTS:
+                part = await rag.find_titled(w, stock_names)
+                if part:
+                    print(f"recipes: they asked for {w!r} — showing how {part['title']!r} is made")
+                    break
+    # A dinner built around a sauce they named takes longer than "something for
+    # tonight": half an hour by default, not twenty minutes and four steps.
+    budget = time_budget(asked, body.maxMinutes, named_dish=bool(dish), default=30 if part else None)
+    if wanted:
+        user += "\n\nThey asked for: " + ", ".join(wanted) + ". The recipe must have every one of them."
+        # Named on purpose: something the shelves haven't got is bought, not dropped.
+        on_shelf = " ".join(stock_names).lower()
+        if any(w.rstrip("s") not in on_shelf for w in wanted if w not in ("meat", "fish", "vegetables", "veg", "veggie", "veggies", "greens")):
+            in_kitchen = set()
     if budget:
         user += f"\n\nIt has to be on the table in {budget} minutes."
     if body.conversation:
         talk = "\n".join(f"{m.role}: {m.content}" for m in body.conversation[-12:])
         user = f"Turn what we agreed in this conversation into the recipe.\n\n{talk}\n\nExtra wishes: {user}"
-
-    yield "stage", "corpus"
-    rag = svc(request, "rag")
-    stock_names = [str(known[s_.id].get("name", s_.id)) for s_ in body.stock if s_.id in known]
+    if free:
+        in_kitchen = set()          # they asked not to be held to the shelves
+    if dish:
+        in_kitchen = set()          # nothing-to-buy is a quick-dinner rule, not a mochi rule
+        # The real recipe's ingredients that the catalogue has must be in the
+        # id list the model sees, or it maps pecorino onto parmesan because
+        # pecorino was trimmed out to fit the context window.
+        for line in str(dish.get("ingredients") or "").split("\n"):
+            iid = _as_known_id(template._food(line).replace("-", " "), known)
+            if iid and iid not in keep_ids:
+                keep_ids.append(iid)
 
     # ---- Is there already a recipe for this kitchen? -----------------------
     #
@@ -269,7 +317,7 @@ async def _write_recipe(body: GenerateIn, request: Request):
     # Corpus methods are rarely that short, and a tired person waits for both.
     candidate = None
     quick = budget is not None and budget <= 30
-    if not body.options and body.template and not quick and getattr(s, "template_enabled", True):
+    if not body.options and body.template and not quick and not dish and not free and getattr(s, "template_enabled", True):
         candidate = await template.pick(
             rag, f"{user} {' '.join(stock_names)}", stock_names,
             floor=float(getattr(s, "template_floor", 0.72) or 0.72),
@@ -293,7 +341,7 @@ async def _write_recipe(body: GenerateIn, request: Request):
             if isinstance(raw, dict):
                 raw["serves"] = body.serves      # scaled for the table asked for, whatever it says
             recipe = clean_recipe(raw, known, origin="template")
-            problems = recipe_problems(recipe, budget, in_kitchen) if recipe else ["nothing usable"]
+            problems = recipe_problems(recipe, budget, in_kitchen, known=known, asked=wanted) if recipe else ["nothing usable"]
             if not problems:
                 recipe["basedOn"] = candidate["title"]
                 template.remember(candidate["title"], body.serves, recipe)
@@ -311,14 +359,18 @@ async def _write_recipe(body: GenerateIn, request: Request):
     # every one of these is prompt the model must read before it writes anything,
     # and on a local 9B reading is the expensive part — see RAG_CHARS in
     # prompts.py.
-    retrieved = await rag.search(user + " " + stock, 1) if (rag and not candidate) else []
+    # The search is on what they asked for and the NAMES of what's on the
+    # shelves — not the prompt's own sentences ("on the table in 20 minutes")
+    # or ingredient codes like "oliveoil", which outrank any real word.
+    retrieved = (await rag.search(asked if free else asked + " " + " ".join(stock_names), 1)
+                 if (rag and not candidate and not dish and not part) else [])
 
     yield "stage", "ideas" if body.options else "method"
     try:
         if body.options:
-            raw = await llm.json(prompts.recipe_ideas_system(ids_for(known, keep_ids), stock, body.serves, retrieved, budget), user, RECIPE_IDEAS_SCHEMA, 900)
+            raw = await llm.json(prompts.recipe_ideas_system(ids_for(known, keep_ids), stock, body.serves, retrieved, budget, dish, free), user, RECIPE_IDEAS_SCHEMA, 900)
         else:
-            raw = await llm.json(prompts.recipe_system(ids_for(known, keep_ids), stock, body.serves, retrieved, budget), user, RECIPE_SCHEMA, 1800)
+            raw = await llm.json(prompts.recipe_system(ids_for(known, keep_ids), stock, body.serves, retrieved, budget, dish, part, free), user, RECIPE_SCHEMA, 1800)
     except Exception as e:  # noqa: BLE001
         # The server's own sentence, not just the exception's class name. A
         # local server that refuses a field answers 400 with a line naming it,
@@ -334,7 +386,8 @@ async def _write_recipe(body: GenerateIn, request: Request):
         if isinstance(raw, dict):
             raw["serves"] = body.serves
         recipe = clean_recipe(raw, known, origin="assistant")
-        problems = recipe_problems(recipe, budget, in_kitchen) if recipe else ["it didn't hold together"]
+        problems = (recipe_problems(recipe, budget, in_kitchen, dish, known, wanted)
+                    if recipe else ["it didn't hold together"])
 
         # ONE second go, told exactly what was wrong. A small model that wrote
         # four hours of boiled courgettes and a hummus nobody bought fixes most
@@ -345,7 +398,7 @@ async def _write_recipe(body: GenerateIn, request: Request):
             yield "stage", "method"
             try:
                 again = await llm.json(
-                    prompts.recipe_system(ids_for(known, keep_ids), stock, body.serves, retrieved, budget),
+                    prompts.recipe_system(ids_for(known, keep_ids), stock, body.serves, retrieved, budget, dish, part, free),
                     user + "\n\nYour last attempt was rejected because " + "; ".join(problems)
                     + ". Write it again with every one of those fixed.",
                     RECIPE_SCHEMA, 1800)
@@ -354,7 +407,7 @@ async def _write_recipe(body: GenerateIn, request: Request):
                     again["serves"] = body.serves
                 second = clean_recipe(again, known, origin="assistant")
                 if second:
-                    left = recipe_problems(second, budget, in_kitchen)
+                    left = recipe_problems(second, budget, in_kitchen, dish, known, wanted)
                     if not recipe or len(left) <= len(problems):
                         recipe, problems = second, left
             except Exception as e:  # noqa: BLE001 — the first recipe still stands
@@ -367,6 +420,8 @@ async def _write_recipe(body: GenerateIn, request: Request):
             recipe["problems"] = problems
         if budget:
             recipe["budget"] = budget
+        if dish:
+            recipe["basedOn"] = dish["title"]
         yield "done", {"recipe": recipe}
         return
 
@@ -379,7 +434,7 @@ async def _write_recipe(body: GenerateIn, request: Request):
             "name": item["name"][:80],
             "description": str(item.get("description") or "")[:200],
             "minutes": max(1, min(600, int(item.get("minutes") or 30))),
-            "complexity": item.get("complexity") if item.get("complexity") in (1, 2, 3) else 2,
+            **dict(zip(("stars", "complexity"), clean_stars(item))),
             "cuisine": str(item.get("cuisine") or "Everyday")[:30],
         })
     if len(ideas) < 2:
@@ -432,7 +487,7 @@ async def recipes_generate_stream(body: GenerateIn, request: Request):
 async def understand(body: UnderstandIn, request: Request):
     llm = need(request, "llm", "The assistant")
     known = ingredients()
-    cuisines = sorted({r["cuisine"] for r in recipe_book()["recipes"]})
+    cuisines = CUISINES
     await context_window.refresh(settings())
     user = f"{body.text}\n\n{ids_for(known)}"
     try:
@@ -517,11 +572,15 @@ async def chat(body: ChatIn, request: Request):
         # tokens for the model to read before every single answer, and nothing
         # the answer can use. Every question in cooking mode paid for that.
         rag = None if cooking else svc(request, "rag")
-        retrieved = await rag.search(last + " " + (body.context.recipe or {}).get("name", "")) if rag else []
+        # "How do I make mochi?" gets a real mochi recipe, method and all; any
+        # other question gets the usual couple of references.
+        shelf = [str((known.get(s_.id) or {}).get("name", s_.id)) for s_ in body.context.stock]
+        dish = await rag.find_dish(last, shelf) if rag else None
+        retrieved = [] if dish else (await rag.search(last + " " + (body.context.recipe or {}).get("name", "")) if rag else [])
 
         system = prompts.chef_system(body.context.model_dump(), attachment,
                                      ids=ids_for(known, chat_keep, int(getattr(s, "llm_chat_ids_chars", 0) or 0)),
-                                     customs=body.custom, retrieved=retrieved)
+                                     customs=body.custom, retrieved=retrieved, dish=dish)
         msgs = [m.model_dump() for m in body.messages]
         try:
             async with (pf.foreground() if pf else nullcontext()):

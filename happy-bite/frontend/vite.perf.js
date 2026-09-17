@@ -6,12 +6,10 @@
       every visit. The core stays in the bundle; the corpus becomes a compact
       JSON asset (arrays, no keys, no server-only `added`/`uses`), fetched in
       parallel with the bundle and merged before the kitchen opens.
-   2. recipes.json contributes only mealTypes and complexity to the browser;
-      its recipes array (unused by the frontend) no longer ships.
-   3. index.html: the stylesheet stops blocking the first paint (the static
+   2. index.html: the stylesheet stops blocking the first paint (the static
       boot screen is styled by the inline critical CSS), and the Latin font and
       the corpus are preloaded so they download alongside the bundle.
-   4. Every text asset is written pre-compressed (.br, .gz) for the server to
+   3. Every text asset is written pre-compressed (.br, .gz) for the server to
       send as-is — no compression work per request.
 
    shared/*.json is never modified: the server reads the same files. */
@@ -23,9 +21,7 @@ import { brotliCompressSync, constants, gzipSync } from "node:zlib";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CATALOG = resolve(HERE, "../shared/catalog.json");
-const BOOK = resolve(HERE, "../shared/recipes.json");
 const CATALOG_ID = "\0hb-catalog";
-const BOOK_ID = "\0hb-book";
 const DEV_CORPUS = "/@hb/catalog-corpus.json";
 
 const COMPACT = ["name", "category", "unit", "shelfLife"];
@@ -76,7 +72,6 @@ export default function happyBitePerf() {
       if (!importer || !source.endsWith(".json")) return null;
       const target = resolve(dirname(importer.split("?")[0]), source);
       if (target === CATALOG) return CATALOG_ID;
-      if (target === BOOK) return BOOK_ID;
       return null;
     },
 
@@ -89,11 +84,6 @@ export default function happyBitePerf() {
           : JSON.stringify(DEV_CORPUS);
         // JSON.parse of a string literal parses markedly faster than an object literal.
         return `export default { ...JSON.parse(${JSON.stringify(JSON.stringify(core))}), corpusUrl: ${url} };`;
-      }
-      if (id === BOOK_ID) {
-        this.addWatchFile(BOOK);
-        const { mealTypes, complexity } = JSON.parse(readFileSync(BOOK, "utf8"));
-        return `export default ${JSON.stringify({ mealTypes, complexity })};`;
       }
       return null;
     },

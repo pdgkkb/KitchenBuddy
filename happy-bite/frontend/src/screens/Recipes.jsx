@@ -10,7 +10,8 @@ import { useUI } from "../state/ui.jsx";
 import { DishImage } from "../components/Chrome.jsx";
 import { Icon } from "../components/Icon.jsx";
 import { Ring } from "../components/Charts.jsx";
-import { effortName, listOf } from "./Today.jsx";
+import { listOf } from "./Today.jsx";
+import Stars from "../components/Stars.jsx";
 
 export default function Recipes() {
   const { k } = useKitchen();
@@ -65,7 +66,7 @@ export default function Recipes() {
               <DishImage recipe={r} className="rcard-img" />
               <span className="rcard-body">
                 <span className="rcard-name">{r.name}</span>
-                <span className="rcard-sub">{r.minutes} min, {effortName(r.complexity).toLowerCase()}, {r.cuisine}</span>
+                <span className="rcard-sub">{E.minutesOf(r)} min · <Stars recipe={r} size={15} /> · {r.cuisine}</span>
                 <span className={"rcard-need" + (a.cookable ? " is-ready" : "")}>
                   {a.cookable ? "Ready to cook" : "Need " + listOf(a.missing.map(m => m.id))}
                 </span>

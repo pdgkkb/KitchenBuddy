@@ -11,7 +11,6 @@
    import is the whole file and there is nothing to fetch. */
 
 import catalog from "../../../shared/catalog.json" with { type: "json" };
-import book from "../../../shared/recipes.json" with { type: "json" };
 import receipt from "../../../shared/receipt-sample.json" with { type: "json" };
 
 export const CATEGORIES = catalog.categories;
@@ -20,8 +19,17 @@ export const STARTING_STOCK = catalog.startingStock;
 // The recipe book starts empty. Recipes are created by the assistant and
 // saved locally after the household chooses one.
 export const RECIPES = [];
-export const MEAL_TYPES = book.mealTypes;
-export const COMPLEXITY = book.complexity;
+// These used to be read from shared/recipes.json, which no longer exists.
+export const MEAL_TYPES = [
+  { id: "breakfast", name: "Breakfast" }, { id: "lunch", name: "Lunch" },
+  { id: "dinner", name: "Dinner" }, { id: "snack", name: "Snack" },
+];
+// The Effort filter. Recipes are rated in stars; see starsOf in core/engine.js.
+export const COMPLEXITY = [
+  { level: 1, name: "Up to 1½ stars", note: "No technique required" },
+  { level: 2, name: "Up to 3 stars", note: "A few things to get right" },
+  { level: 3, name: "Any", note: "Worth it, but pay attention" },
+];
 export const SAMPLE_RECEIPT = receipt;
 export const CUISINES = [...new Set(RECIPES.map(r => r.cuisine))].sort();
 

@@ -5,6 +5,7 @@ import "./styles/tokens.css";
 import "./styles/app.css";
 import "./styles/redesign.css";
 import "./styles/sheet-hairlines.css";
+import "./styles/receipt-capture.css";
 import "./styles/motion.css";                 // last: interaction and motion states win
 import App from "./App.jsx";
 

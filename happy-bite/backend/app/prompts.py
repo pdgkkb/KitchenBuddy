@@ -304,7 +304,7 @@ def cook_system(ctx: dict, known: dict | None = None) -> str:
 
 
 def chef_system(ctx: dict, attachment: dict | None, ids: str = "", customs: dict | None = None,
-                retrieved: list[dict] | None = None) -> str:
+                retrieved: list[dict] | None = None, dish: dict | None = None) -> str:
     cooking = ctx.get("mode") == "cooking"
     parts = [CHEF, _ids_block(_cooking_ids(ctx, ids) if cooking else ids, customs)]
 
@@ -341,7 +341,11 @@ def chef_system(ctx: dict, attachment: dict | None, ids: str = "", customs: dict
     # Never in cooking mode. api.chat doesn't even run the retrieval there — this
     # guard is belt and braces, so a future caller can't put four other people's
     # recipes in front of someone standing over a hot pan.
-    if retrieved and not cooking:
+    if dish and not cooking:
+        parts.append(f"They are asking about a specific dish: {dish.get('dish')}. A real recipe for it, "
+                     "that people have cooked — answer from its method and ingredients rather than "
+                     "guessing, in your own words:\n" + dish_reference(dish))
+    elif retrieved and not cooking:
         parts.append("Relevant reference recipes from a large cooking corpus. Use them as "
                      "inspiration and explain similarities or substitutions; do not claim "
                      "they are the user's recipe:\n" + _retrieved_text(retrieved))
@@ -373,15 +377,63 @@ def _retrieved_text(recipes: list[dict]) -> str:
     return "\n".join(out)[:RAG_CHARS]
 
 
-def time_rule(budget: int | None) -> str:
+# A named dish gets ONE real recipe for it, method included — see
+# rag.find_dish. Without the method a small model knows mochi has kinako and
+# sugar in it and nothing about steaming glutinous rice flour, and invents the
+# rest. Longer than the ingredients-only reference below, and worth it: it is
+# the difference between the dish and a guess at it.
+DISH_INGREDIENTS_CHARS = 500
+DISH_METHOD_CHARS = 900
+
+
+def _clip(text: str, limit: int) -> str:
+    """Cut at a line or sentence end, not mid-word."""
+    text = str(text or "").strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    end = max(cut.rfind("\n"), cut.rfind(". "))
+    return (cut[:end + 1] if end > limit // 2 else cut).rstrip() + " …"
+
+
+def dish_reference(hit: dict) -> str:
+    lines = [l.strip() for l in str(hit.get("ingredients") or "").split("\n") if l.strip()]
+    return (f"{hit.get('title')}\nIngredients:\n" + _clip("\n".join(f"- {l}" for l in lines), DISH_INGREDIENTS_CHARS)
+            + "\nMethod:\n" + _clip(hit.get("instructions"), DISH_METHOD_CHARS))
+
+
+def dish_rule(hit: dict, serves: int) -> str:
+    return f"""THEY ASKED FOR A SPECIFIC DISH: {hit.get('dish')}. Make that dish, properly.
+Below is a real recipe for it that people have cooked. Follow its method,
+proportions and technique, and keep what makes the dish what it is: if it needs
+glutinous rice flour, it needs glutinous rice flour — never swap in something
+from their kitchen just because it is there. Write it in your own words in this
+app's format, scaled for {serves}. Map its ingredients to ids; anything with no
+id goes in "extras", and the app puts it on their shopping list.
+
+{dish_reference(hit)}"""
+
+
+def part_rule(hit: dict) -> str:
+    """A part of the dish they named — the bechamel in "pasta with bechamel" —
+    shown as it is really made. Shorter than a whole dish's reference: it is
+    one element of the recipe, not the recipe."""
+    lines = [l.strip() for l in str(hit.get("ingredients") or "").split("\n") if l.strip()]
+    return (f"THEY ASKED FOR {str(hit.get('dish')).upper()}. It must be IN the dish, made properly. This is how it "
+            "is made, from a real recipe — make it this way as part of the method:\n"
+            f"{hit.get('title')}\nIngredients:\n" + _clip("\n".join(f"- {l}" for l in lines), 350)
+            + "\nMethod:\n" + _clip(hit.get("instructions"), 600))
+
+
+def time_rule(budget: int | None, named_dish: bool = False, free: bool = False) -> str:
     """The time a recipe has to fit in, said so it cannot be missed.
 
     Put at the END of the system prompt on purpose: a small model weighs the
     last thing it read most, and this is the rule it broke hardest — four hours
     of boiled courgettes for someone who wanted dinner."""
     if not budget:
-        return ("TIME: they asked for something that takes its time. Give honest "
-                "minutes on every step.")
+        return ("TIME: give the honest time this dish takes, step by step." if named_dish else
+                "TIME: they asked for something that takes its time. Give honest minutes on every step.")
     short = budget <= 20
     return f"""TIME — THE MOST IMPORTANT RULE: they have {budget} minutes, start to finish,
 chopping included. The step minutes MUST add up to {budget} or less, and the
@@ -389,11 +441,24 @@ recipe's "minutes" is that sum. {"Three or four steps. One pan. " if short else 
 naturally that quick (eggs, stir-fries, fried rice, quesadillas, pasta with a
 pan sauce, a warm salad) — never a slow dish squeezed into a short time.{
 """
-Use ONLY what is in the kitchen: nothing to buy.""" if budget <= 30 else ""}"""
+Use ONLY what is in the kitchen: nothing to buy.""" if budget <= 30 and not named_dish and not free else ""}"""
+
+
+KITCHEN_RULE = """Prefer what's in the kitchen, especially anything that goes off soon. Put
+anything that must be bought in "needs" anyway — the app will flag it."""
+
+# The "Any ingredients" switch. The kitchen is still listed, so a dish that can
+# use the courgette going off will, but it is a hint and not the brief.
+FREE_RULE = """They switched on ANY INGREDIENTS: write the best dish for the request, not
+the best dish the kitchen can make. Do not limit yourself to what is in the
+kitchen and do not build the dish around it. Use what they have only where it
+genuinely fits. Everything the dish needs goes in "needs", "seasoning" or
+"extras" — whatever they haven't got goes on their shopping list."""
 
 
 def recipe_system(id_list: str, stock_lines: str, serves: int,
-                  retrieved: list[dict] | None = None, budget: int | None = None) -> str:
+                  retrieved: list[dict] | None = None, budget: int | None = None,
+                  dish: dict | None = None, part: dict | None = None, free: bool = False) -> str:
     system = f"""You write recipes for a kitchen app used by tired people standing up.
 The recipes must be genuinely good: real technique, balanced seasoning, a
 reason to look forward to dinner. Not "healthy bowl" filler.
@@ -402,8 +467,7 @@ Valid ingredient ids, with their unit: {id_list}
 
 Currently in the kitchen: {stock_lines or "nothing recorded"}
 
-Prefer what's in the kitchen, especially anything that goes off soon. Put
-anything that must be bought in "needs" anyway — the app will flag it.
+{FREE_RULE if free else KITCHEN_RULE}
 Cook for {serves}.
 
 If the request is broad or vague, decide the dish yourself from the kitchen
@@ -412,13 +476,17 @@ inventory above is authoritative. Use the retrieved corpus for proven ideas,
 then make a fresh recipe.
 
 {RULES}"""
-    if retrieved:
+    if dish:
+        system += "\n\n" + dish_rule(dish, serves)
+    elif part:
+        system += "\n\n" + part_rule(part)
+    elif retrieved:
         system += ("\n\nReference recipes retrieved for this request. Use them only to "
                    "understand broad ingredient pairings and techniques. Create a "
                    "new recipe with a different name, ingredient combination or "
                    "method; never reproduce a reference recipe or its wording. "
                    "Follow the valid ingredient-id rules above:\n" + _retrieved_text(retrieved))
-    return system + "\n\n" + time_rule(budget)
+    return system + "\n\n" + time_rule(budget, named_dish=bool(dish), free=free)
 
 
 def recipe_options_system(id_list: str, stock_lines: str, serves: int,
@@ -428,8 +496,9 @@ def recipe_options_system(id_list: str, stock_lines: str, serves: int,
 
 
 def recipe_ideas_system(id_list: str, stock_lines: str, serves: int,
-                        retrieved: list[dict] | None = None, budget: int | None = None) -> str:
-    base = recipe_system(id_list, stock_lines, serves, retrieved, budget)
+                        retrieved: list[dict] | None = None, budget: int | None = None,
+                        dish: dict | None = None, free: bool = False) -> str:
+    base = recipe_system(id_list, stock_lines, serves, retrieved, budget, dish, free=free)
     return base + "\n\nReturn exactly two concise recipe ideas only. Do not write ingredients or steps yet. Give each a distinct name, one-sentence description, cuisine, minutes, and difficulty. Decide everything yourself from the kitchen and request; do not ask questions."
 
 

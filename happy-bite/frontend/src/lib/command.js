@@ -154,7 +154,7 @@ export function parse(text, ctx = {}) {
     if (openRecipeId && startNow)
       return { action: { kind: "cook_recipe", id: openRecipeId }, say: "Let's cook." };
     if (!r && (startNow || cookVerb))
-      return { action: { kind: "open_featured" }, say: "Here's tonight's dish — say \"let's cook\" to start." };
+      return { action: { kind: "open_featured" }, say: "Here are three from your recipes — pick one." };
   }
 
   // Reading the kitchen out loud — before navigation, so "what's in the kitchen"
@@ -285,9 +285,36 @@ export function timerMinutes(text) {
   return minutes > 0 && minutes <= 600 ? Math.round(minutes * 60) / 60 : null;
 }
 
+/* "go to step 2", "back to step two", "step 3", "the first step".
+   Before this existed, "go to step 2" went to the model as a question: it read
+   step 2 out loud and the screen stayed where it was. Speech-to-text writes
+   "two" as "to" or "too" often enough to count them, but only straight after
+   "step". A question about a step ("how long is step 2") is not a move. */
+const STEP_NUMBERS = {
+  one: 1, won: 1, two: 2, to: 2, too: 2, three: 3, four: 4, for: 4, five: 5, six: 6,
+  seven: 7, eight: 8, ate: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+};
+const ORDINALS = {
+  first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6,
+  seventh: 7, eighth: 8, ninth: 9, tenth: 10, eleventh: 11, twelfth: 12,
+};
+const GOTO_LEAD = String.raw`^(?:(?:ok|okay|so|and|now|please|can you|could you|let s|lets)\s+)*` +
+  String.raw`(?:(?:go back|go|jump|skip|move|get|take me|switch|show me|read me|read|back)\s+)?(?:on\s+)?(?:to\s+)?(?:the\s+)?`;
+const GOTO_NUMBER = new RegExp(GOTO_LEAD + String.raw`step\s+(?:number\s+)?(\d{1,2}|[a-z]+)(?:\s+(?:please|now))?$`);
+const GOTO_ORDINAL = new RegExp(GOTO_LEAD + String.raw`([a-z]+)\s+step(?:\s+(?:please|now))?$`);
+
+export function stepNumber(t) {
+  let m = t.match(GOTO_NUMBER);
+  if (m) return /^\d+$/.test(m[1]) ? Number(m[1]) : STEP_NUMBERS[m[1]] || null;
+  m = t.match(GOTO_ORDINAL);
+  return m ? ORDINALS[m[1]] || null : null;
+}
+
 export function parseCook(text) {
   const t = norm(text);
   if (!t) return null;
+  const goto = stepNumber(t);
+  if (goto) return { cmd: "goto", step: goto };
   const minutes = timerMinutes(text);
   if (minutes && !/\b(stop|cancel|clear|kill)\b/.test(t)) return { cmd: "timer", minutes };
   // Eight rather than six: "can you go back to the previous step please" is

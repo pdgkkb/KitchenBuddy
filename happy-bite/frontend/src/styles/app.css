@@ -461,6 +461,3 @@ code { font-size: .9em; background: var(--surface-sunk); padding: 2px 6px; borde
 .offline-note.is-page { padding: 40px var(--gap); }
 
 
-
-/* Tonight's one button: the tired-evening request, a full-width tap. */
-.drained-btn { width: 100%; margin: 4px 0 16px; }

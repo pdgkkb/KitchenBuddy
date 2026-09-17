@@ -7,6 +7,7 @@
 
 import { useState } from "react";
 import * as E from "../core/engine.js";
+import { realCue, stepHeat } from "../core/brief.js";
 import * as api from "../lib/api.js";
 import { useKitchen } from "../state/kitchen.jsx";
 import { useUI } from "../state/ui.jsx";
@@ -54,10 +55,10 @@ export function RecipeDetails({ recipe: r, serves, choices, setChoices }) {
         </div>
       )}
 
-      {!r.problems?.length && r.contradictions?.length > 0 && (
+      {!r.problems?.length && stillWrong(r).length > 0 && (
         <div className="band is-warm">
           <b>Read the method twice</b>
-          <span>It mentions something this recipe doesn't contain — {r.contradictions.join(", ")}.
+          <span>It mentions something this recipe doesn't contain — {stillWrong(r).join(", ")}.
             The assistant lost the thread; trust the ingredients above.</span>
         </div>
       )}
@@ -101,9 +102,11 @@ export function RecipeDetails({ recipe: r, serves, choices, setChoices }) {
         <ul className="ings">
           {r.seasoning.filter(x => held.has(x.id) || x.essential).map(x => {
             const rr = E.ref(x.id);
-            const amount = x.toTaste || !x.qty
-              ? "to taste"
-              : E.formatQty(E.scale(x.qty * mult, serves, r.serves, rr.unit), rr.unit);
+            const qty = x.qty ? E.scale(x.qty * mult, serves, r.serves, rr.unit) : 0;
+            // "1 g" of salt is a pinch, and nobody weighs a pinch.
+            const amount = x.toTaste || !x.qty ? "to taste"
+              : rr.unit === "g" && qty <= 1.5 ? "a pinch"
+              : E.formatQty(qty, rr.unit);
             return <li key={x.id} className="ing"><span className="ing-qty">{amount}</span>
               <span className="ing-name">{rr.name}</span></li>;
           })}
@@ -154,10 +157,13 @@ export function RecipeMethod({ recipe: r }) {
           <li key={i} className="step">
             <span className="step-no">{i + 1}</span>
             <div>
-              <p className="step-label">Step {i + 1} · {st.minutes >= 3 ? `${st.minutes} min` : "watch closely"}</p>
-              {(st.heat || st.cue) && <p className="step-heat">
-                {st.heat && <span className="heat-tag"><Icon name="flame" size={16} />{st.heat}</span>}
-                {st.cue && <span className="heat-cue">until {st.cue.toLowerCase()}</span>}</p>}
+              {/* "Watch closely" is for a short step at the stove, not for
+                  tossing chicken in a bowl. */}
+              <p className="step-label">Step {i + 1}{E.stepMinutes(st) >= 3 ? ` · ${E.stepMinutes(st)} min`
+                : stepHeat(st) ? " · watch closely" : ""}</p>
+              {(stepHeat(st) || realCue(st)) && <p className="step-heat">
+                {stepHeat(st) && <span className="heat-tag"><Icon name="flame" size={16} />{stepHeat(st)}</span>}
+                {realCue(st) && <span className="heat-cue">until {realCue(st).toLowerCase()}</span>}</p>}
               <p className="step-do">{st.do}</p>
               {st.uses?.length > 0 && (
                 <p className="now-in">
@@ -248,22 +254,24 @@ export default function RecipeSheet({ id }) {
   );
 }
 
-export function AlternatesSheet({ list }) {
-  const ui = useUI();
-  if (!list.length) return <p className="empty-note">Nothing else works with what's in the kitchen right now.</p>;
-  return (
-    <ul className="cards">
-      {list.map(n => (
-        <li key={n.recipe.id}>
-          <button className="rcard" onClick={() => ui.openSheet("recipe", { id: n.recipe.id })}>
-            <DishImage recipe={n.recipe} className="rcard-img" />
-            <span className="rcard-body">
-              <span className="rcard-name">{n.recipe.name}</span>
-              <span className="rcard-sub">{n.recipe.minutes} min{n.missing.length ? ", needs " + n.missing.map(m => nameOf(m.id)).join(", ") : ""}</span>
-            </span>
-          </button>
-        </li>
-      ))}
-    </ul>
-  );
+/* The "mentions something this recipe doesn't contain" lines saved with a
+   recipe, minus the ones the server's check got wrong before it was fixed:
+   "step 1 mentions chicken" on a recipe made of chicken breast, "mentions
+   marinade". Recipes written since are checked properly on the server; this
+   keeps older ones in the book from crying wolf. */
+const NOT_FOODS = new Set(["ingredient", "marinade", "mixture", "sauce", "dressing", "filling", "garnish",
+  "season", "serve", "water", "salt", "pepper", "stock", "whole", "savory", "olive", "sprinkle"]);
+const undoubled = (w) => w.replace(/(.)\1+/g, "$1");
+function stillWrong(r) {
+  const words = new Set();
+  [...(r.needs || []), ...(r.seasoning || [])].forEach(n =>
+    String(E.ref(n.id).name || n.id).toLowerCase().split(/[^a-z]+/).filter(Boolean)
+      .forEach(w => { words.add(w); words.add(w.replace(/e?s$/, "")); words.add(undoubled(w)); }));
+  (r.extras || []).forEach(x => String(x).toLowerCase().split(/[^a-z]+/).forEach(w => words.add(w)));
+  return (r.contradictions || []).filter(line => {
+    const w = (line.match(/mentions (\w+)/) || [])[1] || "";
+    const bare = w.replace(/e?s$/, "");
+    return !NOT_FOODS.has(bare) && !NOT_FOODS.has(w) && !words.has(w) && !words.has(bare)
+      && !words.has(undoubled(w)) && !words.has(undoubled(bare));
+  });
 }
