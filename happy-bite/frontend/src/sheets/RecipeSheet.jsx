@@ -20,7 +20,32 @@ import AdaptPanel from "../components/AdaptPanel.jsx";
 
 /* Everything about the dish EXCEPT the method: what you need, seasoning,
    options, ideas. This is the left column on a wide screen. */
-export function RecipeDetails({ recipe: r, serves, choices, setChoices }) {
+/* How many people this is for. The recipe keeps the quantities it was written
+   with; everything shown (ingredients, seasoning, what's short) and everything
+   cooking mode says is scaled from r.serves to this number with E.scale.
+   Nothing is rewritten, so going from 2 to 6 and back to 2 is exact. */
+export const MAX_SERVES = 20;                      // the server accepts up to 20 in cooking mode
+
+export function ServesStepper({ serves, setServes, written }) {
+  const n = Math.max(1, Math.round(Number(serves) || 1));
+  const set = (to) => setServes(Math.min(MAX_SERVES, Math.max(1, to)));
+  return (
+    <span className="serves-step" role="group" aria-label="Number of servings">
+      <button type="button" className="serves-btn" onClick={() => set(n - 1)} disabled={n <= 1}
+              aria-label="One serving fewer">−</button>
+      <span className="serves-num" aria-live="polite">{n} {n === 1 ? "person" : "people"}</span>
+      <button type="button" className="serves-btn" onClick={() => set(n + 1)} disabled={n >= MAX_SERVES}
+              aria-label="One serving more">+</button>
+      {Number(written) > 0 && Number(written) !== n && (
+        <button type="button" className="serves-reset" onClick={() => set(Number(written))}>
+          written for {written}
+        </button>
+      )}
+    </span>
+  );
+}
+
+export function RecipeDetails({ recipe: r, serves, setServes, choices, setChoices }) {
   const { k, addWish } = useKitchen();
   const ui = useUI();
   const held = new Map(k.stock.map(a => [a.id, a]));
@@ -46,6 +71,15 @@ export function RecipeDetails({ recipe: r, serves, choices, setChoices }) {
         </div>
       )}
 
+      {/* The method used these and the list had no amount for them, so the
+          assistant was asked for just the amounts (backend recipes.add_amounts). */}
+      {r.added?.length > 0 && (
+        <div className="band">
+          <b>Added to the ingredients</b>
+          <span>The method uses these, so they were added with an amount: {r.added.join("; ")}.</span>
+        </div>
+      )}
+
       {/* Sent back once with this list and still wrong. The server's words,
           because they are the specific ones: "step 2 says 255 minutes". */}
       {r.problems?.length > 0 && (
@@ -63,7 +97,10 @@ export function RecipeDetails({ recipe: r, serves, choices, setChoices }) {
         </div>
       )}
 
-      <h3 className="sub-head">What you need for {serves}</h3>
+      <div className="serves-head">
+        <h3 className="sub-head">What you need for{setServes ? "" : ` ${serves}`}</h3>
+        {setServes && <ServesStepper serves={serves} setServes={setServes} written={r.serves} />}
+      </div>
       <ul className="ings">
         {r.needs.map(n => {
           const rr = E.ref(n.id);
@@ -210,8 +247,9 @@ export default function RecipeSheet({ id }) {
   const ui = useUI();
   const r = k.book.find(x => x.id === id);
   const [choices, setChoices] = useState({});
+  const [picked, setServes] = useState(null);      // null: the household's diners, as before
   if (!r) return null;
-  const serves = k.diners.length || r.serves;
+  const serves = picked ?? (k.diners.length || r.serves);
   const planned = k.planned.includes(r.id);
 
   return (
@@ -232,7 +270,7 @@ export default function RecipeSheet({ id }) {
               {r.description && <p className="lead">{r.description}</p>}
               {r.source && <p className="sub-note">From <a href={r.source.url} target="_blank" rel="noreferrer">{r.source.site}</a>. Adapted for your kitchen; the original is the authority.</p>}
               <PhotoStrip recipe={r} />
-              <RecipeDetails recipe={r} serves={serves} choices={choices} setChoices={setChoices} />
+              <RecipeDetails recipe={r} serves={serves} setServes={setServes} choices={choices} setChoices={setChoices} />
             </div>
           </div>
           <div className="recipe-right">

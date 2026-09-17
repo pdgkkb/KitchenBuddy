@@ -234,6 +234,21 @@ body::after {
 }
 
 /* ================================================================ COOK — live bar */
+/* Press to talk. The wake word is for busy hands; this is for the moments when
+   saying "Bob" again is the annoying part — and for a room where the recogniser
+   keeps mishearing a one-syllable name. One tap, one turn. */
+.cook-talk {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  width: min(420px, 100%); margin: 10px auto 0; min-height: 60px; padding: 0 22px;
+  border-radius: 999px; border: 2px solid var(--border); background: var(--bg-surface);
+  color: var(--text); font: var(--t-small); font-size: 17px; font-weight: 700; cursor: pointer;
+  box-shadow: var(--shadow-sm); transition: transform .12s ease, background .16s ease, border-color .16s ease;
+}
+.cook-talk:hover { border-color: var(--primary); }
+.cook-talk:active { transform: scale(.98); }
+.cook-talk.is-listening { background: var(--primary); border-color: var(--primary); color: var(--text-on-primary); }
+.cook-talk:focus-visible { outline: 3px solid var(--primary); outline-offset: 3px; }
+
 .cook-live {
   display: flex; align-items: center; gap: 10px;
   margin: 0 var(--gap, 16px) 4px; padding: 10px 14px;

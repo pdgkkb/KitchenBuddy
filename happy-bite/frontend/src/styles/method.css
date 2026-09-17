@@ -141,3 +141,25 @@
   font-size: 0.9rem;
   color: var(--ink-soft, rgba(0, 0, 0, 0.6));
 }
+
+
+/* ------------------------------------------------ servings: − 2 people + */
+
+.serves-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 28px 0 10px; }
+.serves-head .sub-head { margin: 0; }
+.serves-step { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.serves-btn {
+  flex: none; width: 44px; height: 44px; border-radius: 50%;
+  display: grid; place-items: center;
+  border: 2px solid var(--line, var(--border)); background: var(--surface);
+  color: var(--ink); font-size: 24px; font-weight: 700; line-height: 1; cursor: pointer;
+}
+.serves-btn:hover:not(:disabled) { border-color: var(--mint); }
+.serves-btn:active:not(:disabled) { background: var(--mint-wash, var(--surface-sunk)); }
+.serves-btn:disabled { opacity: .35; cursor: default; }
+.serves-btn:focus-visible, .serves-reset:focus-visible { outline: 3px solid var(--mint); outline-offset: 2px; }
+.serves-num { min-width: 92px; text-align: center; font: var(--t-lead); font-weight: 700; font-variant-numeric: tabular-nums; }
+.serves-reset {
+  border: 0; background: transparent; padding: 6px 8px; border-radius: 999px;
+  color: var(--ink-soft); font: var(--t-small); text-decoration: underline; text-underline-offset: 3px; cursor: pointer;
+}

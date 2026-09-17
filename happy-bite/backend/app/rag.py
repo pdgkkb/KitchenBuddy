@@ -94,7 +94,14 @@ comfort cheap kids kid guests impress family weeknight lazy fast best favourite 
 vegetarian vegan gluten free low carb high protein leftover leftovers drained tired exhausted minutes
 minute hour hours table time slow sunday big small little lunchbox fresh new different tasty yummy
 delicious nice good great classic simple real proper traditional authentic style
+dessert desserts desert deserts snack snacks starter starters appetizer appetizers appetiser appetisers
+side sides main mains course courses treat treats sweet sweets supper brunch baking bake dish dishes
+food party picnic afternoon evening morning
 """.split())
+# ^ The second half: a COURSE is not a dish. "A dessert recipe with flour,
+#   cornstarch and sugar" matched "dessert" in 20+ titles, followed "Mom's
+#   Dessert" (instant pudding and Cool Whip over a crust) and lost every
+#   ingredient that was asked for.
 # A cuisine names a dish only as part of a longer name: "pad thai", "thai green
 # curry" — never "something thai" on its own.
 CUISINES = frozenset("""

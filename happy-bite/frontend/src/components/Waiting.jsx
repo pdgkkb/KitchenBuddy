@@ -24,6 +24,64 @@ import { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon.jsx";
 import "../styles/waiting.css";
 
+/* The pot that fills while the model works. The level is the stage the SERVER
+   reported, not a timer, and it stops short of the brim on purpose: the last
+   stage stays lit until the real recipe comes back, so the pot must never look
+   finished before it is. Ingredients fall in and sink under the surface. */
+export function PotMark({ fill = 0 }) {
+  const level = 82 - Math.max(0, Math.min(1, fill)) * 70;      // 82 empty, 12 nearly full
+  return (
+    <svg className="pot" viewBox="0 0 186 200" style={{ "--level": level }} aria-hidden="true">
+      <defs>
+        <linearGradient id="pot-soup" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="var(--primary, #2BC08E)" />
+          <stop offset="1" stopColor="var(--secondary, #22B3D6)" />
+        </linearGradient>
+        <clipPath id="pot-inside">
+          <path d="M36 74 h114 l-9 86 a16 16 0 0 1-16 14 H61 a16 16 0 0 1-16-14 Z" />
+        </clipPath>
+      </defs>
+
+      <g className="pot-steam-group" fill="none" strokeWidth="5" strokeLinecap="round">
+        <path className="pot-steam" d="M74 52 c-7-9 7-14 0-23" />
+        <path className="pot-steam pot-steam-2" d="M96 46 c-7-10 7-15 0-24" />
+        <path className="pot-steam pot-steam-3" d="M118 52 c-7-9 7-14 0-23" />
+      </g>
+
+      <g className="pot-body" fill="none" strokeWidth="9" strokeLinecap="round">
+        <path d="M34 92 h-13 a11 11 0 0 0 0 22 h11" />
+        <path d="M152 92 h13 a11 11 0 0 1 0 22 h-11" />
+      </g>
+
+      {/* they fall from above the rim; the liquid is painted after them, so
+          they simply sink out of sight */}
+      <g>
+        <g className="pot-drop"><circle cx="66" cy="66" r="9" fill="var(--danger, #E5484D)" />
+          <path d="M66 57 l5-6" stroke="var(--primary-strong, #2F7D52)" strokeWidth="3" strokeLinecap="round" /></g>
+        <g className="pot-drop pot-drop-2"><path d="M96 58 l8 4 -8 16 -8-16 Z" fill="var(--accent, #F5A524)" /></g>
+        <g className="pot-drop pot-drop-3"><ellipse cx="124" cy="66" rx="9" ry="7" fill="var(--butter, #F6E4AC)" /></g>
+        <g className="pot-drop pot-drop-4"><path d="M80 64 c10-10 22-8 22-8 c0 12-10 18-22 8 Z" fill="var(--primary, #34C99A)" /></g>
+      </g>
+
+      <g clipPath="url(#pot-inside)">
+        <g className="pot-fill">
+          {/* Eight half-waves wide (x -150 to 330) for a pot that is 114 wide:
+              the slide below is exactly one wavelength (120), so there is always
+              liquid under every part of the pot and the loop has no seam. */}
+          <path className="pot-wave" fill="url(#pot-soup)"
+                d="M-150 86 q30 -12 60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 v130 H-150 Z" />
+          <path className="pot-wave pot-wave-2" fill="var(--primary, #2BC08E)" opacity=".55"
+                d="M-150 92 q30 10 60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 t60 0 v130 H-150 Z" />
+        </g>
+      </g>
+
+      <path className="pot-body" d="M36 74 h114 l-9 86 a16 16 0 0 1-16 14 H61 a16 16 0 0 1-16-14 Z"
+            fill="none" strokeWidth="9" strokeLinejoin="round" />
+      <rect className="pot-rim" x="24" y="62" width="138" height="16" rx="8" />
+    </svg>
+  );
+}
+
 /* Rough seconds per stage on a local Qwen. Used only to pace the narration —
    nothing waits on them, and the last one is open-ended by design. */
 /* These are now keyed to the real phases the server reports (`key`), not to a
@@ -116,11 +174,11 @@ export default function Waiting({
     <div className={"waiting" + (error ? " is-failed" : "")}
          role="status" aria-live="polite" aria-busy={!error}>
 
-      <div className="waiting-mark" aria-hidden="true">
-        {error
-          ? <Icon name="chef" size={34} />
-          : <span className="waiting-pan"><i /><i /><i /></span>}
-      </div>
+      {/* The pot fills as the server moves through the stages. It stops short
+          of the brim: nothing here claims to be finished before it is. */}
+      {error
+        ? <div className="waiting-mark" aria-hidden="true"><Icon name="chef" size={34} /></div>
+        : <PotMark fill={stages.length ? Math.min(0.9, (at + 1) / stages.length) : 0.5} />}
 
       <p className="waiting-title">{error ? "That didn't work" : (stages[at]?.label || title)}</p>
 

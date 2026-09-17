@@ -76,6 +76,7 @@ export default function CookMode() {
   const [pictures, setPictures] = useState({});
   const [drawing, setDrawing] = useState(false);
   const [live, setLive] = useState(false);               // hands-free listening on
+  const oneShotRef = useRef(false);                      // this turn came from the Talk button
   const [vstate, setVstate] = useState("");              // waiting | listening | thinking | speaking
   const [answer, setAnswer] = useState("");              // the chef's latest short reply
   const [instant, setInstant] = useState(false);         // that answer was already written
@@ -215,6 +216,11 @@ export default function CookMode() {
      hearNext() with no argument, which is back to waiting. */
   const hearNext = useCallback((awake = false) => {
     if (!liveRef.current || listenRef.current) return;
+    /* A turn the cook started with the Talk button is exactly one turn: when it
+       is over, the microphone closes again rather than sitting there waiting to
+       hear its name. Someone who wants it listening all the time uses the mic
+       button in the header, which is what "live" means. */
+    if (!awake && oneShotRef.current) { oneShotRef.current = false; stopLive(); return; }
     const session = sessionRef.current;
     const current = () => session === sessionRef.current && liveRef.current;
     setVstate(awake ? "listening" : "waiting");
@@ -320,6 +326,26 @@ export default function CookMode() {
         hearNext();
     }
   }, [recipe, total, useServer, goStep, ingredientsLine, finish, say]); // eslint-disable-line
+
+  /* Talk without saying the name. In cooking mode the microphone is always
+     gated on "Bob" so the radio and the conversation don't move the recipe on —
+     which is right when your hands are busy and wrong when you are holding the
+     tablet. Tapping this is the same as saying the name and waiting for the
+     chime: one turn, no name. Nothing here needs the internet; the words are
+     transcribed by the local model like every other command. */
+  const talkNow = useCallback(() => {
+    if (!useServer || !ui.server.chat) return;
+    voice.stopSpeaking();                                  // cut the chef off mid-sentence if needed
+    sq.cancel();
+    try { listenRef.current?.stop(); } catch { /* it may already be finishing */ }
+    listenRef.current = null;
+    if (!liveRef.current) {                                // tapping it also opens the microphone
+      oneShotRef.current = true;
+      liveRef.current = true;
+      setLive(true);
+    }
+    hearNext(true);
+  }, [useServer, ui.server.chat, hearNext]);
 
   const startLive = useCallback(() => {
     if (!useServer) { ui.say("Turn on the local voice (Whisper + Kokoro) to cook hands-free."); return; }
@@ -437,6 +463,17 @@ export default function CookMode() {
           <span className="cook-live-dot" />
           <span>{stateLabel || `Say “${wakeName}”, then “next”, “repeat”, or ask me anything. “${wakeName}, stop cooking” to end.`}</span>
         </div>
+      )}
+
+      {useServer && ui.server.chat && (
+        <button className={"cook-talk is-" + (vstate === "listening" ? "listening" : live ? "live" : "idle")}
+                onClick={talkNow}
+                aria-label={`Talk without saying ${wakeName}`}>
+          <Icon name="mic" size={22} />
+          <span>{vstate === "listening" ? "Listening — say it now"
+            : vstate === "thinking" ? "Thinking…"
+            : `Talk without saying “${wakeName}”`}</span>
+        </button>
       )}
 
       <div className="cook-stage">

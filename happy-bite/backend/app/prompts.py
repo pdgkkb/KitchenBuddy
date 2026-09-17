@@ -1,6 +1,7 @@
 """Every system prompt in one place, so the voice stays the same."""
 
 import json
+import re
 
 from .recipes import RULES
 
@@ -246,7 +247,108 @@ aloud while their hands are busy.
 - Food safety is never softened.
 - If what they said makes no sense for this dish, it was probably misheard: ask
   them to say it again.
+- When they ask what a word MEANS ("what does opaque mean?", "what's al dente?",
+  "what does that mean?"), explain it, in one or two sentences, by what they can
+  SEE, HEAR, FEEL or SMELL right now. Never answer with the step's own wording or
+  the cue they just heard, and never with a word that needs the same explanation.
+  If they ask again, they didn't understand: say it a different way, with
+  something to compare it to.
 - Reply in the language they speak."""
+
+# ---------------------------------------------------------------- kitchen words
+#
+# "What does 'the fish turns opaque' mean?" came back as "when the fish is
+# cooked through and seems translucent" — the opposite word — and "what does
+# that mean?" came back as "fish turns opaque". A 2B model asked to stay inside
+# the recipe will hand the cue straight back. These are the words a recipe uses
+# as cues, in the words a person can act on, and the one they asked about is put
+# in front of the model before it answers.
+
+TERMS = {
+    "opaque": "the flesh has turned from see-through and glassy to solid white all the way through, like the difference between raw and cooked white fish",
+    "translucent": "you can still half see through it, the way raw fish or a slice of raw onion looks before it cooks",
+    "al dente": "cooked through but still firm when you bite it, with no hard chalky centre",
+    "shimmer": "the oil looks like it is moving in ripples and thins out over the pan, just before it would smoke",
+    "shimmering": "the oil looks like it is moving in ripples and thins out over the pan, just before it would smoke",
+    "golden": "a light biscuit colour, the shade of toast you would eat",
+    "golden brown": "the colour of good toast, darker than yellow and nowhere near burnt",
+    "caramelise": "the sugars turn brown and sweet-smelling, the edges going sticky and dark",
+    "caramelised": "the sugars have turned brown and sweet-smelling, the edges sticky and dark",
+    "sear": "put it on a hot pan and leave it alone until a brown crust forms, a minute or two, before turning it",
+    "sweat": "cook gently in a little fat until it softens and goes glassy, without letting it take any colour",
+    "saute": "fry quickly in a little fat over a fairly high heat, moving it around the pan",
+    "sauté": "fry quickly in a little fat over a fairly high heat, moving it around the pan",
+    "simmer": "small bubbles breaking the surface now and then, not a rolling boil",
+    "rolling boil": "big bubbles all over the surface that keep going when you stir",
+    "reduce": "let it bubble uncovered so some of the liquid steams off and what is left tastes stronger and coats a spoon",
+    "deglaze": "pour liquid into the hot pan and scrape the brown bits off the bottom with a spoon",
+    "fold": "cut down through the middle with a spatula and lift one side over the other, slowly, so the air stays in",
+    "rest": "leave it off the heat and untouched so the juices settle back through it before you cut it",
+    "set": "it has firmed up and no longer runs when you tilt the pan",
+    "tender": "a knife or fork slides in with almost no push",
+    "fork-tender": "a fork goes in and comes out with no resistance",
+    "wilt": "the leaves collapse and go glossy and dark in the heat",
+    "blanch": "a minute or two in boiling water, then straight into cold water to stop it cooking",
+    "parboil": "boil it part of the way, to finish cooking another way later",
+    "poach": "cook gently in liquid that is hot but barely moving, no real bubbles",
+    "render": "the fat melts out of it and turns to liquid in the pan",
+    "baste": "spoon the hot fat or juices from the pan back over the top, again and again",
+    "emulsify": "whisk two things that normally separate, like oil and lemon, until they go thick and creamy",
+    "temper": "warm the cold thing slowly with a spoonful of the hot thing first, so the eggs do not scramble",
+    "knead": "push the dough away with the heel of your hand, fold it back, turn it, and repeat until it is smooth and springy",
+    "proof": "leave the dough somewhere warm until it has risen and springs back slowly when you press it",
+    "soft peaks": "lift the whisk and the peak flops over at the tip",
+    "stiff peaks": "lift the whisk and the peak stands up without falling",
+    "curdle": "it splits into lumps and watery liquid instead of staying smooth",
+    "score": "cut shallow lines into the surface with a knife, not all the way through",
+    "zest": "the coloured outside of the skin, grated off without the bitter white underneath",
+    "julienne": "cut into thin matchsticks",
+    "dice": "cut into small even cubes",
+    "mince": "chop as finely as you can",
+    "char": "let the edges go properly black in spots, which tastes smoky rather than burnt",
+    "crisp": "it has gone dry and firm on the outside and crackles when you tap it",
+    "sizzle": "a steady frying sound, loud enough to hear from where you are standing",
+}
+
+_ASKS_MEANING = re.compile(
+    r"\bwhat\s+(does|do|is|are|s)\b[^?]*\bmean\b"          # "what does opaque mean"
+    r"|\bwhat do you mean\b|\bmeaning of\b"
+    r"|\bwhat(?:'|\u2019)?s\s+(?:an?\s+)?\w+(?:\s+\w+){0,2}\s*\??$"   # "what's al dente?"
+    r"|\bwhat is\s+(?:an?\s+)?\w+(?:\s+\w+){0,2}\s*\??$"
+    r"|\bexplain\b|\bi don(?:'|\u2019)?t (?:understand|get it)\b|\bhow do i know\b", re.I)
+
+
+def term_note(question: str, ctx: dict, history: list[dict] | None = None) -> str:
+    """The plain words for a cue they asked about, ready for the model to use.
+
+    Empty unless they actually asked what something means. The term can be in
+    the question ("what does opaque mean?"), or — for "what does that mean?" —
+    in what the chef just said or in the step they are standing on."""
+    said = str(question or "")
+    if not _ASKS_MEANING.search(said):
+        return ""
+    haystacks = [said.lower()]
+    for m in reversed(history or []):
+        if m.get("role") == "assistant" and m.get("content"):
+            haystacks.append(str(m["content"]).lower())
+            break
+    step = (ctx.get("recipe") or {}).get("steps") or []
+    i = ctx.get("step")
+    if isinstance(i, int) and 0 <= i < len(step):
+        haystacks.append((str(step[i].get("do", "")) + " " + str(step[i].get("cue", ""))).lower())
+    found: list[str] = []
+    for hay in haystacks:
+        for term, plain in TERMS.items():
+            if re.search(rf"\b{re.escape(term)}", hay) and term not in found:
+                found.append(term)
+        if found:
+            break
+    if not found:
+        return ""
+    lines = "\n".join(f"- {t}: {TERMS[t]}" for t in found[:2])
+    return ("\n\nTHEY ASKED WHAT A WORD MEANS. Here is what it means, in plain words:\n"
+            f"{lines}\nSay that in your own words, in one or two sentences, as if they are "
+            "standing over the pan. Do not repeat the step or the cue back at them.")
 
 
 def cook_system(ctx: dict, known: dict | None = None) -> str:
@@ -631,3 +733,20 @@ def adapt_user(recipe: dict, question: str) -> str:
             + (f"Also: {extras}\n" if extras else "")
             + "\nThe method as written:\n" + "\n".join(steps)
             + f"\n\nThey ask: {question}")
+
+# ---------------------------------------------------------------- missing amounts
+AMOUNTS = """You complete the ingredient list of a recipe. The method below uses
+ingredients the list gives no amount for. For each one, give the amount THIS
+recipe needs for the number of people shown, in the unit shown beside it.
+A person-sized plate, not a restaurant batch. Reply with JSON only."""
+
+
+def amounts_user(recipe: dict, gaps: list[str], known: dict) -> str:
+    listed = [f"{(known.get(n.get('id')) or {}).get('name', n.get('id'))} {n.get('qty'):g} {(known.get(n.get('id')) or {}).get('unit', '')}"
+              for n in (recipe.get("needs") or []) + (recipe.get("seasoning") or [])
+              if isinstance(n, dict) and n.get("qty")]
+    method = "\n".join(f"{i}. {st.get('do', '')}" for i, st in enumerate(recipe.get("steps") or [], 1))
+    wanted = "; ".join(f"{g} = {(known.get(g) or {}).get('name', g)} ({(known.get(g) or {}).get('unit', 'g')})" for g in gaps)
+    return (f"Recipe: {recipe.get('name', '')}, for {recipe.get('serves') or 4} people\n"
+            f"Already listed: {', '.join(listed) or 'nothing'}\n\nMethod:\n{method}\n\n"
+            f"Give the amount for each of these ids: {wanted}")

@@ -230,6 +230,8 @@ def _as_known_id(text: str, known: dict) -> str | None:
     as an ingredient they had used.
     """
     raw = str(text or "").strip()
+    # "Egg (u)", "Butter (g)": the id list's own format echoed back as a name.
+    raw = re.sub(r"\s*\((g|kg|mg|ml|cl|l|u)\)\s*$", "", raw, flags=re.I).strip()
     if not raw:
         return None
     if raw in known:
@@ -263,6 +265,14 @@ def _undoubled(word: str) -> str:
     return re.sub(r"(.)\1+", r"\1", word)
 
 
+_UNLISTED_HEADS = {"oil", "salt", "pepper", "water", "spray", "ice", "seasoning", "salts", "peppers"}
+# The catalogue grew from the corpus and kept some of its noise: "Remaining
+# ingredient", "Parchment paper", "Cooking spray" are names, not foods.
+_NOT_A_FOOD_NAME = re.compile(r"\b(ingredients?|paper|foil|wrap|bag|dish|pan|sheet|tin|bowl|spray|mix|"
+                              r"toothpicks?|skewers?|liners?|cups?|rack|string|twine|remaining|optional|"
+                              r"topping|garnish|mixture|leftover)\b")
+
+
 def _contradictions(steps: list[dict], used: set[str], known: dict, dish: str = "") -> list[str]:
     """Steps that name an ingredient this recipe does not contain.
 
@@ -282,16 +292,47 @@ def _contradictions(steps: list[dict], used: set[str], known: dict, dish: str = 
     used_words: set[str] = set()
     # The dish's own name isn't a missing ingredient: "the curry" in a chickpea
     # curry, "the tortilla" in a tortilla, "caramel" in caramelised pork.
+    dish_whole: set[str] = set()
     for w in re.findall(r"[a-z]{4,}", dish.lower()):
         used_words |= {w, w[:-1] if w.endswith("s") else w + "s", w[:5]}
+        dish_whole |= {w, w[:-1] if w.endswith("s") else w + "s"}
+    ingredient_words: set[str] = set()
     for name in used:
         for w in re.findall(r"[a-z]{3,}", name.lower()):
             used_words |= {w, w[:-1] if w.endswith("s") else w + "s"}
+            ingredient_words |= {w, w[:-1] if w.endswith("s") else w + "s"}
+    # "Creamy Chocolate Pudding Delight" excuses a stray "cream" in a step, but
+    # not "cream cheese": for two-word names only whole words count.
+    whole_words = ingredient_words | dish_whole
     # Spelling: the household's "Mozarella" (off a receipt) is the step's
     # "mozzarella". Doubled letters are the usual slip, so both sides are
     # compared with them collapsed.
     used_words |= {_undoubled(w) for w in used_words}
     out: list[str] = []
+    # Two- and three-word names too. "Mix the cream cheese with the powdered
+    # sugar" went unremarked in a recipe with no cream cheese, because only
+    # one-word names were ever looked for. A name is skipped when any of its
+    # words is already in the recipe ("egg yolks" in a recipe with eggs, "lemon
+    # juice" with lemons) or when it is a pan fat or seasoning, which is left
+    # unlisted as often as salt.
+    reported: set[str] = set()
+    multi = {}
+    for ing in known.values():
+        nm = _fold_accents(str(ing.get("name", "")).strip().lower())
+        words = nm.split()
+        if (2 <= len(words) <= 3 and len(nm) >= 8 and words[-1] not in _UNLISTED_HEADS
+                and not _NOT_A_FOOD_NAME.search(nm)):
+            multi[nm] = words
+    for i, st in enumerate(steps, 1):
+        said = " " + " ".join(re.findall(r"[a-z]+", _fold_accents(st.get("do", "") + " " + st.get("why", "")).lower())) + " "
+        for nm, words in multi.items():
+            if f" {nm} " not in said and f" {nm}s " not in said:
+                continue
+            if nm in used or any(w in whole_words or (w[:-1] if w.endswith("s") else w) in whole_words for w in words):
+                continue
+            if nm not in reported:                     # once per ingredient, at its first step
+                reported.add(nm)
+                out.append(f"step {i} mentions {nm}")
     for i, st in enumerate(steps, 1):
         # "Heat olive oil" names the oil for the pan, which is left unlisted as
         # often as salt is — not the olives nobody bought.
@@ -302,9 +343,9 @@ def _contradictions(steps: list[dict], used: set[str], known: dict, dish: str = 
             if (hit and hit.lower() not in used and low not in used_words and hit.lower() not in used_words
                     and low[:5] not in used_words and _undoubled(low) not in used_words
                     and _undoubled(low[:-1] if low.endswith("s") else low) not in used_words):
-                line = f"step {i} mentions {low}"
-                if line not in out:
-                    out.append(line)
+                if low not in reported and not any(low in r_.split() for r_ in reported):
+                    reported.add(low)
+                    out.append(f"step {i} mentions {low}")
     return out[:4]
 
 
@@ -434,6 +475,11 @@ _SLOW = re.compile(
     r"\b(slow|braise[ds]?|stew|roast|weekend|sunday|no rush|take (my|our|your) time|"
     r"all afternoon|project|long cook|oven[- ]baked|casserole|lasagne|lasagna|cake)\b", re.I)
 _TIRED = re.compile(r"\b(drained|exhausted|tired|knackered|shattered|wiped out|destroyed|done in|beat tonight|dead on my feet|no energy)\b", re.I)
+# A dessert or anything baked squeezed into the 20-minute weeknight default came
+# back as "bake the cake for 8 minutes". Forty minutes unless they say a time.
+_BAKING = re.compile(r"\b(desserts?|deserts?|sweets?|cookies?|biscuits?|brownies?|muffins?|cupcakes?|bak(e|es|ing|ed)|"
+                     r"pies?|tarts?|puddings?|crumbles?|pastr(y|ies)|scones?|bread|custard|flan|cheesecake)\b", re.I)
+BAKING_MINUTES = 40
 
 
 def time_budget(text: str, explicit: int | None = None, named_dish: bool = False,
@@ -467,6 +513,8 @@ def time_budget(text: str, explicit: int | None = None, named_dish: bool = False
         return None
     if _TIRED.search(t) or re.search(r"\b(quick|fast|asap|hurry|in a rush)\b", t):
         return 15
+    if _BAKING.search(t):
+        return max(default or 0, BAKING_MINUTES)
     return default or DEFAULT_MINUTES
 
 
@@ -514,6 +562,70 @@ def _out_of_order(steps: list[dict]) -> list[str]:
         if early is not None:
             out.append(f"step {early + 1} uses the {thing} before step {made + 1} makes it; make it first")
     return out
+
+
+# ------------------------------------------------ used, never made
+#
+# "Spread the cream cheese mixture over a cooked crust." No step made a crust
+# and the ingredients had none: the recipe was a copy of a corpus dessert with
+# its first two steps left out. A component a recipe spreads, pours or fills
+# has to come from somewhere — a step that makes it, or an ingredient that is
+# it (a bought pie crust, a jar of tomato sauce).
+
+_COMPONENTS_MADE = ("crust", "pastry", "shell", "dough", "batter", "sauce", "syrup", "custard", "caramel",
+                    "glaze", "icing", "frosting", "filling", "meringue", "ganache", "dressing", "marinade", "roux",
+                    "topping")
+# A crust or pastry case is a thing: it is made, bought, or fitted into the tin.
+# A batter, dough or sauce is usually what the last mixing step produced, and
+# people never say so — "beat the eggs, stir in the flour" then "drop the dough
+# by spoonfuls". Those only need SOME step before them to have mixed something.
+_STRUCTURAL = {"crust", "pastry", "shell"}
+_MAKES = re.compile(r"\b(make|makes|making|prepare|prepares|mix|mixes|combine|combines|whisk|whisks|stir|"
+                    r"stirs|blend|blends|beat|beats|rub|rubs|press|presses|roll|rolls|knead|kneads|simmer|"
+                    r"simmers|melt|melts|bake|bakes|whip|whips|cook|cooks|form|forms|shape|shapes|reduce|"
+                    r"reduces|thicken|thickens|dissolve|dissolves|boil|boils)\b")
+# "until a golden crust forms", "a crisp crust": a result, not a component.
+_NOT_COMPONENT = re.compile(r"\b(golden|brown|browned|crisp|crispy|crunchy|nice|light|thin)\s+(crust|shell)|"
+                            r"\b(crust|shell)\s+(forms|has formed|develops)|\begg ?shells?\b|"
+                            r"\bpastry\s+(bag|brush|cutter|blender|board|wheel)\b|\bsauce\s?pans?\b")
+
+
+def never_made(recipe: dict, known: dict) -> list[str]:
+    """Crusts, sauces, doughs and fillings a step uses that nothing makes."""
+    steps = recipe.get("steps") or []
+    texts = [_fold_accents(str(st.get("do", ""))).lower() for st in steps]
+    bought = " ".join([_fold_accents(str((known.get(n.get("id")) or {}).get("name") or n.get("id") or "")).lower()
+                       for n in (recipe.get("needs") or []) + (recipe.get("seasoning") or []) if isinstance(n, dict)]
+                      + [str(x).lower() for x in recipe.get("extras") or []])
+    out = []
+    for thing in _COMPONENTS_MADE:
+        if thing in bought:
+            continue                                   # a bought one is on the list ("piecrust" too)
+        for i, text in enumerate(texts):
+            clean = _NOT_COMPONENT.sub(" ", text)
+            if not re.search(rf"\b{thing}s?\b", clean):
+                continue
+            # The verb has to be about the component: "whisk together the sauce",
+            # "simmer the tomatoes into a sauce" — not "cook the pasta and toss
+            # it with the sauce", where the cooking was the pasta's.
+            made_here = bool(re.search(rf"{_MAKES.pattern}(\W+\w+){{0,4}}\W+{thing}", clean)
+                             or re.search(rf"\b(to make|into|for) (a |an |the )?(\w+\s)?{thing}", clean))
+            earlier = [_NOT_COMPONENT.sub(" ", t) for t in texts[:i]]
+            if thing in _STRUCTURAL:
+                mentioned_before = any(thing in t or re.search(r"\b(pie|tart|flan)\s?(plate|dish|tin|pan)\b", t)
+                                       and re.search(r"\b(fit|line|press|roll|pat)", t) for t in earlier)
+            else:
+                # Earlier in this same step only MIXING counts: "beat the eggs, stir in
+                # the flour… drop the dough" made a dough; "cook the pasta and toss it
+                # with the sauce" made no sauce.
+                mentioned_before = (any(re.search(rf"\b{thing}s?\b", t) or _MAKES.search(t) for t in earlier)
+                                    or bool(re.search(r"\b(mix|mixes|beat|beats|whisk|whisks|stir|stirs|combine|"
+                                                      r"combines|blend|blends|knead|kneads)\b", clean.split(thing)[0])))
+            if not made_here and not mentioned_before:
+                out.append(f"step {i + 1} uses a {thing} that no step makes and the ingredients don't include; "
+                           f"add the step that makes the {thing}, with everything that goes in it, before step {i + 1}")
+            break                                      # only its first appearance matters
+    return out[:2]
 
 
 # ------------------------------------------------ against the real recipe
@@ -611,7 +723,11 @@ _SERVES = re.compile(
 # the usual cause: "Green Onion" kept in grams, and the model wrote 1 meaning
 # one onion. Herbs by the gram and seasonings are left alone.
 # Not the cupboard: half a gram of nutmeg or baking powder is right.
-_CRUMB_G = {"produce": 3.0, "meat": 20.0, "seafood": 20.0, "dairy": 5.0, "bakery": 10.0, "frozen": 10.0}
+_CRUMB_G = {"produce": 3.0, "meat": 20.0, "seafood": 20.0, "dairy": 5.0, "bakery": 10.0, "frozen": 10.0,
+            # 1 g of margarine, 1 g of powdered sugar: a dessert "for 2". Two grams
+            # still lets through a teaspoon of baking powder or a sachet of yeast.
+            "pantry": 2.0, "other": 2.0}
+_PACKAGE = re.compile(r"^(pkg|package|packet|pack|can|tin|jar|box|bag|carton)\b", re.I)
 
 
 def _crumbs(recipe: dict, known: dict) -> list[str]:
@@ -619,10 +735,218 @@ def _crumbs(recipe: dict, known: dict) -> list[str]:
     for n in recipe.get("needs") or []:
         ing = known.get(n["id"]) or {}
         floor = _CRUMB_G.get(ing.get("category"))
+        if _PACKAGE.search(str(ing.get("name", ""))):
+            floor = 20.0                               # "2 g" of a packet of instant pudding
         if ing.get("unit") == "g" and floor and 0 < float(n.get("qty") or 0) < floor:
             out.append(f"{n['qty']:g} g of {str(ing.get('name', n['id'])).lower()} is a crumb; "
                        f"{n['id']} is weighed in grams, so give the weight a person would use")
     return out[:3]
+
+
+# ------------------------------------------------ dry starches nobody cooked
+#
+# "Quick Savory Egg Rice": rinse the rice, toast it in a dry pan for two
+# minutes, pour the eggs over, fluff and serve. The rice was never cooked. It
+# passed every check, because nothing asked whether rice bought dry ever meets
+# water. A small model under a 20-minute limit leaves out exactly the slow part
+# (12 minutes of simmering), and fried rice written for leftovers reads as a
+# fine recipe to anyone who doesn't notice the kitchen has no leftovers.
+#
+# So every rice, pasta, noodle and grain in a recipe needs a step that boils,
+# simmers, steams or soaks it: "boil the rice", "add the spaghetti to the
+# boiling water", "simmer until the stock is absorbed". A simmer with no water,
+# stock or milk anywhere in the recipe doesn't count either — that was the
+# tomato rice bowl whose rice "simmered until the liquid was absorbed" in no
+# liquid. Canned or tinned lentils are already cooked and are let through.
+
+# (what the cook calls it, how to spot it in a name or a step, honest minutes)
+_DRY_STARCHES = (
+    ("rice", re.compile(r"\brice\b"), "12-15 minutes for white rice, 25-30 for brown"),
+    ("pasta", re.compile(r"\b(pasta|spaghetti|penne|fusilli|macaroni|linguine|tagliatelle|farfalle|"
+                         r"rigatoni|fettuccine|orzo|conchiglie|tortellini|ravioli|gnocchi|vermicelli)\b"),
+     "8-12 minutes for dried pasta, 2-4 for fresh"),
+    ("noodles", re.compile(r"\b(noodles?|udon|soba|ramen)\b"), "3-5 minutes"),
+    ("couscous", re.compile(r"\bcous\s?cous\b"), "5 minutes covered in just-boiled water"),
+    ("quinoa", re.compile(r"\bquinoa\b"), "15 minutes"),
+    ("bulgur", re.compile(r"\bbulg[h]?ur\b"), "10-12 minutes"),
+    ("lentils", re.compile(r"\blentils?\b"), "20-25 minutes, 10-15 for red lentils"),
+    ("barley", re.compile(r"\bbarley\b"), "25-30 minutes"),
+    ("polenta", re.compile(r"\bpolenta\b"), "5 minutes for quick-cook polenta"),
+)
+# Names that contain a starch word but are not the grain: rice vinegar, rice
+# flour, rice paper, egg noodles are still noodles.
+_NOT_A_STARCH = re.compile(r"\b(flour|vinegar|wine|paper|krisp\w*|puffed|cakes?|milk|syrup|bran|flakes|"
+                           r"crackers?|chips|crisps|sauce|stock|salad|biscuits?|cereal)\b")
+_ALREADY_COOKED = re.compile(r"\b(canned|tinned|jarred)\b", re.I)
+
+_WET_COOK = re.compile(r"\b(boil\w*|simmer\w*|steam\w*|poach\w*|parboil\w*|blanch\w*)", re.I)
+# Soaking cooks rice noodles and couscous in hot water. It does not cook rice
+# or lentils: "soak the rice for 30 minutes" is preparation.
+_SOAK_COOKS = re.compile(r"\bsoak\w*\b[^.]*\b(hot|boiling|just-boiled|warm)\b|\b(hot|boiling|just-boiled)\b[^.]*\bsoak"
+                         r"|\bcover\w*\b[^.]*\b(stand|sit|rest|leave)\b", re.I)
+_BOILS_WATER = re.compile(r"\b(boiling|pot of (salted )?water|pan of (salted )?water|"
+                          r"bring\b[^.]*\bto (the |a )?boil|(salted|hot) water)\b", re.I)
+_APPLIANCE = re.compile(r"\b(rice cooker|pressure cooker|instant pot)\b", re.I)
+_LIQUID = re.compile(r"\b(water|stock|broth|bouillon|dashi|milk|coconut milk|cream|wine|passata|liquid)\b", re.I)
+_ABSORB = re.compile(r"\b(absorb\w*|until tender|cover\w*)", re.I)
+_REAL_LIQUID = re.compile(r"\b(water|stock|broth|bouillon|dashi|milk|cream|wine|passata|soup|juice)\b", re.I)
+# How people write "boiled" without saying boil: "cook and drain the pasta",
+# "prepare the couscous as directed on the packet", "cook until al dente".
+# A corpus sample of 6,331 real recipes flagged 41 % before these were read.
+_BOILED_ANYWAY = re.compile(r"\b(drain\w*|al dente|per (the )?(package|packet|box)|according to (the )?"
+                            r"(package|packet|box|instructions|directions)|as directed|(package|packet) "
+                            r"(directions|instructions))\b", re.I)
+_POT = re.compile(r"\b(pot|saucepan|stockpot|dutch oven)\b", re.I)
+_OVEN_OR_SLOW = re.compile(r"\b(bak\w*|oven|slow cooker|crock ?pot|casserole)\b", re.I)
+_NOT_ADDING = re.compile(r"\b(soak\w*|rins\w*|wash\w*)\b", re.I)
+# "Cook the rice" is enough: nobody fries rice by calling it cooking. It is not
+# enough in a frying pan or a wok, and "the cooked rice" says nothing about who
+# cooked it — that is the leftover-rice recipe for a kitchen with no leftovers.
+_COOK_VERB = re.compile(r"\bcook(s|ing)?\b", re.I)
+_DRY_HEAT = re.compile(r"\b(fry|fried|frying|toast\w*|saut\w*|stir-?fr\w*|wok|frying pan|skillet|pan)\b", re.I)
+_ALL_OF_IT = re.compile(r"\b(all|remaining|rest of the) (the )?ingredients\b|\beverything\b", re.I)
+_LABEL_NOISE = frozenset("""uncooked cooked dried small large medium white brown long grain whole wheat fresh
+thin fine broken pieces about cups ounces pound pounds package quick style shaped curly favorite""".split())
+
+
+def _starch_kind(name: str):
+    low = _fold_accents(str(name or "")).lower()
+    if _NOT_A_STARCH.search(low):
+        return None
+    for kind, rx, minutes in _DRY_STARCHES:
+        if rx.search(low):
+            return kind, rx, minutes
+    return None
+
+
+_FLOUR = re.compile(r"\b(flour|cornstarch|corn ?starch|cornflour|corn flour)\b")
+_NOT_RAW_FLOUR = re.compile(r"\b(tortillas?|bread|wraps?|pitas?|noodles?|pasta|crumbs|breadcrumbs|crackers?|cake mix)\b")
+_APPLIES_HEAT = re.compile(r"\b(bak\w*|oven|cook(s|ing)?|fr(y|ies|ied|ying)|simmer\w*|boil\w*|microwav\w*|griddle|"
+                           r"toast\w*|steam\w*|heat\w*|thicken\w*|roux|saut\w*|grill\w*|broil\w*|stovetop|hob)\b", re.I)
+
+
+def raw_flour(recipe: dict, known: dict) -> list[str]:
+    """Flour or cornstarch that never meets heat.
+
+    "Pour the batter into a greased dish. Let it sit for 5 minutes before
+    serving": a bowl of raw flour and sugar, served. Raw flour isn't safe to
+    eat, and a batter that is never baked, fried or simmered isn't a dessert.
+    A heat on a later step counts ("Medium"), so does baking, frying,
+    simmering, a microwave, or thickening a sauce with it."""
+    names = [(str((known.get(n.get("id")) or {}).get("name") or n.get("id") or ""), n.get("id"))
+             for n in recipe.get("needs") or [] if isinstance(n, dict)]
+    names += [(str(x), None) for x in recipe.get("extras") or []]
+    flours = [(nm, iid) for nm, iid in names
+              if _FLOUR.search(_fold_accents(nm).lower()) and not _NOT_RAW_FLOUR.search(_fold_accents(nm).lower())]
+    if not flours:
+        return []
+    # Any heat anywhere will do. People write "sift the dry ingredients" and
+    # "bake" without saying flour again; a sample of 2,921 corpus recipes with
+    # flour flagged 30 % when the heat had to follow a step naming it. What
+    # matters is a recipe with no heat at all.
+    heated = any(_APPLIES_HEAT.search(_fold_accents(str(st.get("do", ""))).lower())
+                 or (str(st.get("heat") or "").strip().lower() not in EMPTY_WORDS | {"", "omit"})
+                 for st in recipe.get("steps") or [])
+    if heated:
+        return []
+    name = flours[0][0].lower()
+    return [f"the {name} is never cooked: raw flour isn't safe to eat, and a batter or dough has to be "
+            f"baked, fried or simmered. Add the step that cooks it, with the heat or oven temperature and the time"]
+
+
+def uncooked_starches(recipe: dict, known: dict) -> list[str]:
+    """Rice, pasta, noodles or grains that no step boils, simmers or steams."""
+    steps = recipe.get("steps") or []
+    texts = [_fold_accents(str(st.get("do", ""))).lower() for st in steps]
+    liquid_named = any(_REAL_LIQUID.search(t) for t in texts) or any(
+        _REAL_LIQUID.search(str((known.get(n.get("id")) or {}).get("name", n.get("id", ""))))
+        for n in (recipe.get("needs") or []) if isinstance(n, dict)) or any(
+        _REAL_LIQUID.search(str(x)) for x in (recipe.get("extras") or []))
+
+    found = []                                   # (label, kind, pattern, minutes, id or None)
+    for n in recipe.get("needs") or []:
+        if not isinstance(n, dict) or _ALREADY_COOKED.search(str(n.get("prep") or "")):
+            continue
+        name = str((known.get(n.get("id")) or {}).get("name") or n.get("id") or "")
+        kind = _starch_kind(name)
+        if kind:
+            found.append((name, *kind, n.get("id")))
+    for extra in recipe.get("extras") or []:
+        if _ALREADY_COOKED.search(str(extra)):
+            continue
+        kind = _starch_kind(extra)
+        if kind:
+            found.append((re.sub(r"^[\d\s.,/]+(g|kg|ml|cups?|grams?)?\s*", "", str(extra)).strip() or kind[0],
+                          *kind, None))
+
+    out, seen = [], set()
+    for label, kind, rx, minutes, iid in found:
+        if kind in seen:
+            continue
+        seen.add(kind)
+        cooked, dry_simmer, first, liquid_in, prev_named = False, None, None, False, False
+        # The ingredient's own words, so "Cook the ziti" counts for "ziti pasta".
+        own = [w for w in re.findall(r"[a-z]{4,}", _fold_accents(label).lower()) if w not in _LABEL_NOISE]
+        # Words of the recipe's OTHER ingredients: "boil the green beans" right
+        # after "toast the rice" is about the beans, not a continuation.
+        others = {w for n in (recipe.get("needs") or []) if isinstance(n, dict) and n.get("id") != iid
+                  for w in re.findall(r"[a-z]{4,}", _fold_accents(str((known.get(n.get("id")) or {}).get("name") or n.get("id") or "")).lower())
+                  if w not in _LABEL_NOISE and w not in own}
+        mentioned = [bool((iid and iid in (st.get("uses") or [])) or rx.search(t)
+                          or any(re.search(rf"\b{w}\b", t) for w in own)) for st, t in zip(steps, texts)]
+        if not any(mentioned):                 # "mix all ingredients in a baking dish"
+            mentioned = [bool(_ALL_OF_IT.search(t)) for t in texts]
+        for i, (st, text) in enumerate(zip(steps, texts)):
+            names_it = mentioned[i]
+            if names_it and first is None:
+                first = i
+            if first is None:
+                continue
+            after = texts[i + 1] if i + 1 < len(texts) else ""
+            near = names_it or (prev_named and not any(re.search(rf"\b{w}", text) for w in others))
+            #      "Rinse the quinoa. Soak in boiling water…" is still the quinoa
+            prev_named = names_it
+            # Once it is in the pot, the step that pours in the stock cooks it
+            # too, even when that step doesn't say "rice" again: "add the stock
+            # a ladle at a time until absorbed", "pour in the water and simmer".
+            # Rinsing or soaking in water puts nothing in the pot.
+            if _REAL_LIQUID.search(text) and not _NOT_ADDING.search(text):
+                liquid_in = True
+            wet = liquid_in or liquid_named
+            if near and (_APPLIANCE.search(text) or _BOILS_WATER.search(text)
+                         or (names_it and any(_BOILS_WATER.search(t) for t in texts[:i]))):
+                cooked = True
+            elif near and kind in ("noodles", "couscous") and _SOAK_COOKS.search(text):
+                cooked = True
+            elif names_it and re.search(r"\b(cook|prepar|make)\w*", text) and (
+                    _BOILED_ANYWAY.search(text) or re.match(r"\s*drain", after)
+                    or (re.search(r"\buntil tender\b", text) and (_POT.search(text) or wet))):
+                cooked = True
+            elif names_it and _COOK_VERB.search(text) and not _DRY_HEAT.search(text):
+                cooked = True
+            elif _OVEN_OR_SLOW.search(text) and wet:
+                cooked = True                  # uncooked rice baked in the soup and water it sits in
+            elif _WET_COOK.search(text) or (_ABSORB.search(text) and _LIQUID.search(text)):
+                if liquid_in or (near and (liquid_named or re.search(r"\b(boil\w*|steam\w*|parboil\w*|blanch\w*)", text))):
+                    cooked = True
+                elif names_it:
+                    dry_simmer = dry_simmer or i + 1
+            elif _COOK_VERB.search(text) and liquid_in:
+                cooked = True
+            if cooked:
+                break
+        name = label.lower()
+        if cooked:
+            continue
+        if dry_simmer:
+            out.append(f"step {dry_simmer} simmers the {name} but no water or stock ever goes in; "
+                       f"say how much water or stock is added and at which step")
+        else:
+            out.append(f"the {name} is never cooked: bought dry, it has to be boiled, simmered or "
+                       f"steamed before anyone can eat it. Add the step that does it, with the pot, "
+                       f"the water and the honest time ({minutes}), or choose a dish without it "
+                       f"if that doesn't fit the time")
+    return out[:2]
 
 
 # ------------------------------------------------ what they asked for
@@ -668,6 +992,13 @@ def _fold_accents(text: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKD", str(text)) if not unicodedata.combining(c))
 
 
+# NOT_A_FOOD is about METHODS, where "flour the board" and "sugar" in "sugar
+# snap" name nothing to buy. In a REQUEST these words are the ingredients:
+# "a dessert with flour, cornstarch and sugar" registered only cornstarch.
+_REQUESTABLE = frozenset("""flour sugar cream cheese fruit pastry custard meringue jelly icing frosting
+gravy cake muffin pancake cupcake cornbread meatball toast salad stock broth juice""".split())
+
+
 def asked_foods(text: str, known: dict) -> list[str]:
     """The foods a request names, as it named them. "Make a pasta with
     bechamel, no mushrooms" -> ["pasta", "bechamel"]."""
@@ -676,14 +1007,19 @@ def asked_foods(text: str, known: dict) -> list[str]:
     names = {}
     for ing in known.values():
         nm = _fold_accents(str(ing.get("name", "")).strip().lower())
-        if nm and nm not in NOT_A_FOOD:
+        if nm and (nm not in NOT_A_FOOD or nm in _REQUESTABLE):
             names[nm] = True
-    words = re.findall(r"[a-z]+", text)
+    # Word runs, split at punctuation: "flour, cornstarch and sugar" is three
+    # foods, never the two-word "flour cornstarch" a corpus name happens to be.
+    words, run_of = [], []
+    for r_, part in enumerate(re.split(r"[,;:.!?/()]+", text)):
+        for w in re.findall(r"[a-z]+", part):
+            words.append(w); run_of.append(r_)
     out: list[str] = []
     used = set()
     for n in (2, 1):                           # "coconut milk" before "milk"
         for i in range(len(words) - n + 1):
-            if any(j in used for j in range(i, i + n)):
+            if any(j in used for j in range(i, i + n)) or run_of[i] != run_of[i + n - 1]:
                 continue
             chunk = words[i:i + n]
             phrase = " ".join(chunk)
@@ -691,7 +1027,7 @@ def asked_foods(text: str, known: dict) -> list[str]:
                 out.append(phrase)
                 used.add(i)
                 continue
-            if any(w in STOPWORDS or w in NOT_A_DISH or w in NOT_A_FOOD for w in chunk):
+            if any(w in STOPWORDS or w in NOT_A_DISH or (w in NOT_A_FOOD and w not in _REQUESTABLE) for w in chunk):
                 continue
             single = phrase[:-1] if phrase.endswith("s") else phrase
             if (phrase in names or single in names or phrase + "s" in names or phrase + "es" in names
@@ -745,6 +1081,19 @@ def recipe_problems(recipe: dict, budget: int | None, stock_ids: set[str] | None
             said = int(n) * (60 if unit.lower().startswith("h") else 1)
             if said > ceiling:
                 out.append(f"step {i} says {n} {unit}, far too long")
+    # Before the rest: out[:6] must never cut what makes a dish inedible or
+    # incomplete — raw rice, a food they asked for that isn't there, a crust
+    # nobody made, an ingredient nobody listed, no way to serve it.
+    out += uncooked_starches(recipe, known or {})
+    out += raw_flour(recipe, known or {})
+    if asked:
+        out += missing_asked(recipe, asked, known or {})
+    out += never_made(recipe, known or {})
+    for line in recipe.get("contradictions") or []:
+        out.append(f"{line}, which is not in the ingredients — list it or don't use it")
+    if steps and not _SERVES.search(steps[-1].get("do", "")):
+        out.append(f"the method stops at \"{steps[-1].get('do', '')[:60]}\" and never says how it is served; "
+                   "end with a step like \"Spoon onto warm plates and eat straight away\"")
     for problem in _out_of_order(steps):
         out.append(problem)
     out += _wrong_container(steps)
@@ -765,16 +1114,9 @@ def recipe_problems(recipe: dict, budget: int | None, stock_ids: set[str] | None
                            "give it an oven temperature like 'Oven 200 °C'")
         if not heats_oven(steps):
             out.append("nothing turns the oven on; make the first step 'Turn the oven on to 200 °C'")
-    if asked:
-        out += missing_asked(recipe, asked, known or {})
     if reference:
         out += against_reference(recipe, reference, known or {})
     out += _crumbs(recipe, known or {})
-    if steps and not _SERVES.search(steps[-1].get("do", "")):
-        out.append(f"the method stops at \"{steps[-1].get('do', '')[:60]}\" and never says how it is served; "
-                   "end with a step like \"Spoon onto warm plates and eat straight away\"")
-    for line in recipe.get("contradictions") or []:
-        out.append(f"{line}, which is not in the ingredients — list it or don't use it")
     if budget and budget <= 30 and stock_ids:
         missing = [n["id"] for n in recipe.get("needs") or []
                    if n["id"] not in stock_ids and not n.get("flexible")]
@@ -865,6 +1207,108 @@ def _num(v) -> float | None:
     except (TypeError, ValueError):
         return None
     return f if f == f else None  # NaN guard
+
+
+# ------------------------------------------------ an ingredient list with holes in it
+#
+# "Slowly incorporate the milk" in a recipe whose ingredients had no milk, three
+# attempts in a row: asked to rewrite the whole recipe, a 2B model writes the
+# same list again. Asked only "how much milk does this need?", it answers. So a
+# method that uses a catalogue ingredient the list lacks, or lists one with no
+# amount, gets that one question, and the answer goes through the same caps as
+# every other amount. The method is not touched; the list is completed, and the
+# recipe says what was added.
+
+AMOUNTS_SCHEMA = {
+    "type": "object",
+    "properties": {"amounts": {"type": "array", "items": {
+        "type": "object",
+        "properties": {"id": {"type": "string"}, "qty": {"type": "number", "description": "In the unit shown"}},
+        "required": ["id", "qty"]}}},
+    "required": ["amounts"],
+}
+
+
+def _id_for_mention(name: str, known: dict, prefer: list[str] | None = None) -> str | None:
+    # What is on their shelves first: "the milk" in a kitchen holding "Milk"
+    # is that carton, not the catalogue's "Semi-skimmed milk".
+    low_name = _fold_accents(str(name or "")).lower().strip()
+    stem = low_name[:-1] if low_name.endswith("s") else low_name
+    for k in prefer or []:
+        nm = _fold_accents(str((known.get(k) or {}).get("name", ""))).lower()
+        if nm and (nm == low_name or nm.rstrip("s") == stem or nm.endswith(" " + stem) or nm.endswith(" " + low_name)):
+            return k
+    iid = _as_known_id(name, known)
+    if iid:
+        return iid
+    low = _fold_accents(str(name or "")).lower().strip()
+    for cand in (low, low[:-1] if low.endswith("s") else low + "s", low[:-2] if low.endswith("es") else low):
+        for k, ing in known.items():
+            if _fold_accents(str(ing.get("name", ""))).lower() == cand:
+                return k
+    return None
+
+
+def ingredient_gaps(recipe: dict, known: dict, prefer: list[str] | None = None) -> list[str]:
+    """Catalogue ingredients the method uses with no amount in the list."""
+    gaps: list[str] = []
+    for line in recipe.get("contradictions") or []:
+        m = re.match(r"step \d+ mentions (.+)$", str(line))
+        iid = _id_for_mention(m.group(1), known, prefer) if m else None
+        if iid and iid not in gaps:
+            gaps.append(iid)
+    for n in recipe.get("needs") or []:
+        if isinstance(n, dict) and not n.get("qty") and n.get("id") in known and n["id"] not in gaps:
+            gaps.append(n["id"])
+    return gaps[:6]
+
+
+def drop_unused_zeros(recipe: dict, known: dict) -> None:
+    """"Water 0 ml" on the list and in no step: a name the model put in extras
+    for no reason. Listed with no amount and never used, it is only noise."""
+    text = _fold_accents(" ".join(str(st.get("do", "")) for st in recipe.get("steps") or [])).lower()
+    def used(iid):
+        words = [w for w in re.findall(r"[a-z]{3,}", _fold_accents(str((known.get(iid) or {}).get("name", iid))).lower())]
+        return any(re.search(rf"\b{w[:-1] if w.endswith('s') else w}", text) for w in words)
+    recipe["needs"] = [n for n in recipe.get("needs") or []
+                       if not isinstance(n, dict) or n.get("qty") or used(n.get("id"))]
+
+
+def add_amounts(recipe: dict, amounts: dict[str, float], known: dict) -> list[str]:
+    """Put the answered amounts into the recipe, through the usual caps.
+    Returns what was added, in words, and records it on the recipe."""
+    serves_n = int(recipe.get("serves") or 4)
+    added: list[str] = []
+    needs = [n for n in recipe.get("needs") or [] if isinstance(n, dict)]
+    seasoning = [x for x in recipe.get("seasoning") or [] if isinstance(x, dict)]
+    for iid, q in amounts.items():
+        q = _num(q)
+        if iid not in known or not q or q <= 0:
+            continue
+        unit = known[iid].get("unit", "g")
+        if _is_seasoning(iid, known):
+            qty, capped = _season_qty(q, unit, serves_n)
+            entry = {"id": iid, "qty": qty, "essential": False, **({"toTaste": True} if capped else {})}
+            seasoning = [x for x in seasoning if x.get("id") != iid] + [entry]
+        else:
+            qty, trimmed = _need_qty(q, known[iid], serves_n)
+            old = next((n for n in needs if n.get("id") == iid), {})
+            entry = {**old, "id": iid, "qty": qty, **({"flexible": True} if trimmed else {})}
+            needs = [n for n in needs if n.get("id") != iid] + [entry]
+        added.append(f"{known[iid].get('name', iid)} {qty:g} {'' if unit == 'u' else unit}".strip())
+    if not added:
+        return []
+    recipe["needs"], recipe["seasoning"] = needs, seasoning
+    recipe["added"] = list(dict.fromkeys((recipe.get("added") or []) + added))[:8]
+    used = {str(known[x["id"]].get("name", "")).lower() for x in needs + seasoning if x.get("id") in known}
+    used |= {str(e).lower() for e in recipe.get("extras") or []}
+    wrong = _contradictions(recipe.get("steps") or [], used, known, recipe.get("name") or "")
+    if wrong:
+        recipe["contradictions"] = wrong
+    else:
+        recipe.pop("contradictions", None)
+    recipe["stars"], recipe["complexity"] = clean_stars({"stars": stars_from_method(recipe)})
+    return added
 
 
 def clean_recipe(raw: dict, known: dict[str, dict], origin: str = "assistant") -> dict | None:

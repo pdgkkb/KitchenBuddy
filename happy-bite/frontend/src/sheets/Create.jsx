@@ -277,8 +277,9 @@ export function DraftSheet({ draft, method }) {
   const [name, setName] = useState(draft.name);
   const [photo, setPhoto] = useState(draft.photo);
   const [choices, setChoices] = useState({});
+  const [picked, setServes] = useState(null);      // null: the household's diners, as before
   const recipe = { ...draft, name, photo };
-  const serves = k.diners.length || draft.serves;
+  const serves = picked ?? (k.diners.length || draft.serves);
 
   // Into the book on arrival, exactly as written.
   useEffect(() => { saveRecipe({ ...draft }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -335,7 +336,7 @@ export function DraftSheet({ draft, method }) {
       <div className="draft-cols">
         <div className="draft-left">
           <PhotoStrip recipe={recipe} auto onPrimary={setPhoto} />
-          <RecipeDetails recipe={recipe} serves={serves} choices={choices} setChoices={setChoices} />
+          <RecipeDetails recipe={recipe} serves={serves} setServes={setServes} choices={choices} setChoices={setChoices} />
         </div>
         <div className="draft-right">
           <RecipeMethod recipe={recipe} />

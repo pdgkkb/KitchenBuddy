@@ -27,6 +27,13 @@ from .actions import KITCHEN_TOOLS
 from .catalog import CUISINES, id_list, ids_budget, ingredients
 from .config import settings
 from .importer import ImportErrorPublic, fetch, plain_recipe, read_page
+# Problems that leave a recipe impossible to cook as written, as opposed to
+# untidy: these earn a third attempt (see _write_recipe).
+INCOMPLETE = re.compile(r"they asked for|no step makes|not in the ingredients|is never cooked|"
+                        r"simmers the .* but no water|never says how it is served|leaves out or swaps|"
+                        r"nothing turns the oven on")
+
+from .recipes import AMOUNTS_SCHEMA, add_amounts, drop_unused_zeros, ingredient_gaps
 from .recipes import (COMPONENTS, RECIPE_IDEAS_SCHEMA, RECIPE_OPTIONS_SCHEMA, RECIPE_SCHEMA, _as_known_id, asked_foods, clean_recipe,
                       clean_stars, recipe_problems, time_budget)
 
@@ -299,6 +306,24 @@ async def _write_recipe(body: GenerateIn, request: Request):
             if iid and iid not in keep_ids:
                 keep_ids.append(iid)
 
+    async def complete(recipe):
+        """Fill the ingredient list's holes with one short question (recipes.add_amounts)."""
+        if recipe:
+            drop_unused_zeros(recipe, known)
+        gaps = ingredient_gaps(recipe, known, keep_ids) if recipe else []
+        if not gaps:
+            return recipe
+        try:
+            got = await llm.json(prompts.AMOUNTS, prompts.amounts_user(recipe, gaps, known), AMOUNTS_SCHEMA, 300)
+            answers = {str(a.get("id")): a.get("qty") for a in (got or {}).get("amounts") or [] if isinstance(a, dict)}
+            added = add_amounts(recipe, {g: answers[g] for g in gaps if g in answers}, known)
+            drop_unused_zeros(recipe, known)
+            if added:
+                print("recipes: completed the ingredient list — " + "; ".join(added))
+        except Exception as e:  # noqa: BLE001 — the checks still say what is missing
+            print(f"recipes: couldn't fill the missing amounts ({type(e).__name__}: {str(e)[:120]})")
+        return recipe
+
     # ---- Is there already a recipe for this kitchen? -----------------------
     #
     # Writing a dish from nothing is the most expensive thing a local model
@@ -340,7 +365,7 @@ async def _write_recipe(body: GenerateIn, request: Request):
             yield "stage", "check"
             if isinstance(raw, dict):
                 raw["serves"] = body.serves      # scaled for the table asked for, whatever it says
-            recipe = clean_recipe(raw, known, origin="template")
+            recipe = await complete(clean_recipe(raw, known, origin="template"))
             problems = recipe_problems(recipe, budget, in_kitchen, known=known, asked=wanted) if recipe else ["nothing usable"]
             if not problems:
                 recipe["basedOn"] = candidate["title"]
@@ -385,7 +410,7 @@ async def _write_recipe(body: GenerateIn, request: Request):
         # habit, not a decision, and the app scales every amount from it.
         if isinstance(raw, dict):
             raw["serves"] = body.serves
-        recipe = clean_recipe(raw, known, origin="assistant")
+        recipe = await complete(clean_recipe(raw, known, origin="assistant"))
         problems = (recipe_problems(recipe, budget, in_kitchen, dish, known, wanted)
                     if recipe else ["it didn't hold together"])
 
@@ -405,13 +430,45 @@ async def _write_recipe(body: GenerateIn, request: Request):
                 yield "stage", "check"
                 if isinstance(again, dict):
                     again["serves"] = body.serves
-                second = clean_recipe(again, known, origin="assistant")
+                second = await complete(clean_recipe(again, known, origin="assistant"))
                 if second:
                     left = recipe_problems(second, budget, in_kitchen, dish, known, wanted)
                     if not recipe or len(left) <= len(problems):
                         recipe, problems = second, left
             except Exception as e:  # noqa: BLE001 — the first recipe still stands
                 print(f"recipes: second go failed ({type(e).__name__}: {str(e)[:160]})")
+
+        # Still incomplete after being told once: a food they asked for is
+        # missing, something is used that nobody listed or made, the grain is
+        # raw, or it never says how to serve it. That is a recipe nobody can
+        # cook, so it gets ONE more go. When a corpus reference was followed,
+        # this go is written without it: "Mom's Dessert" pulled a request for
+        # flour, cornstarch and sugar towards instant pudding twice in a row.
+        if recipe and problems and any(INCOMPLETE.search(p_) for p_ in problems):
+            print("recipes: still incomplete, one last go" + (" without the reference" if (dish or part) else "")
+                  + " — " + "; ".join(problems))
+            yield "stage", "method"
+            try:
+                last = await llm.json(
+                    prompts.recipe_system(ids_for(known, keep_ids), stock, body.serves,
+                                          [] if (dish or part) else retrieved, budget, None, None, free),
+                    user + "\n\nTwo attempts were rejected. What is still wrong: " + "; ".join(problems)
+                    + ". Write a COMPLETE recipe: every ingredient any step uses is in the ingredients, "
+                      "every crust, dough, sauce or filling is made in its own step before it is used, "
+                      "and the last step says how it is served.",
+                    RECIPE_SCHEMA, 1800)
+                yield "stage", "check"
+                if isinstance(last, dict):
+                    last["serves"] = body.serves
+                third = await complete(clean_recipe(last, known, origin="assistant"))
+                if third:
+                    left = recipe_problems(third, budget, in_kitchen, None, known, wanted)
+                    worse = lambda ps: (sum(bool(INCOMPLETE.search(x)) for x in ps), len(ps))
+                    if worse(left) < worse(problems):
+                        recipe, problems = third, left
+                        dish = part = None                     # it no longer follows the reference
+            except Exception as e:  # noqa: BLE001 — the better of the first two still stands
+                print(f"recipes: last go failed ({type(e).__name__}: {str(e)[:160]})")
 
         if not recipe:
             raise HTTPException(502, "The assistant's recipe didn't hold together. Try again.")
@@ -552,7 +609,11 @@ async def chat(body: ChatIn, request: Request):
         s = settings()
         pf = svc(request, "prefetch")
         if cooking and not getattr(s, "cook_tools", False):
-            system = prompts.cook_system(body.context.model_dump(), known)
+            ctx = body.context.model_dump()
+            system = prompts.cook_system(ctx, known)
+            # "What does opaque mean?" — the plain words go in before it answers,
+            # or it hands the cue straight back (see prompts.term_note).
+            system += prompts.term_note(last, ctx, [m.model_dump() for m in body.messages])
             msgs = [m.model_dump() for m in body.messages][-8:]
             try:
                 async with (pf.foreground() if pf else nullcontext()):
