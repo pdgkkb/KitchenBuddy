@@ -291,7 +291,10 @@ const METER_MS = 40;               // 25 reads a second is plenty to hear a paus
 
 export function listenVAD({ onText, onError, onStart, silence = 1000, maxWait = 9000, maxLen = 20000 }) {
   const state = listenState(true);
-  if (state !== "ok") { onError?.(LISTEN_REASON[state] || "Can't listen."); return { stop() {} }; }
+  // Both methods, always. A caller that cancels a turn calls abort(); when
+  // this early return handed back an object with only stop() on it, that call
+  // threw, the turn was never cancelled, and the caller's catch swallowed it.
+  if (state !== "ok") { onError?.(LISTEN_REASON[state] || "Can't listen."); return { stop() {}, abort() {} }; }
 
   let recorder = null, meter = 0;
   let stopped = false, speaking = false, started = false, aborted = false;

@@ -236,18 +236,23 @@ body::after {
 /* ================================================================ COOK — live bar */
 /* Press to talk. The wake word is for busy hands; this is for the moments when
    saying "Bob" again is the annoying part — and for a room where the recogniser
-   keeps mishearing a one-syllable name. One tap, one turn. */
-.cook-talk {
-  display: flex; align-items: center; justify-content: center; gap: 10px;
-  width: min(420px, 100%); margin: 10px auto 0; min-height: 60px; padding: 0 22px;
-  border-radius: 999px; border: 2px solid var(--border); background: var(--bg-surface);
-  color: var(--text); font: var(--t-small); font-size: 17px; font-weight: 700; cursor: pointer;
-  box-shadow: var(--shadow-sm); transition: transform .12s ease, background .16s ease, border-color .16s ease;
+   keeps mishearing a one-syllable name. One tap, one turn.
+
+   It is the same round green button, in the same corner, as the one on every
+   other screen, because a second shape for the same idea is a second thing to
+   learn. It is NOT that button: the global agent hides itself here on purpose,
+   since two recognisers cannot share one microphone. This one drives cooking
+   mode's own listening, transcribed on the machine like every other command.
+
+   Bottom right, clear of the ask field, inside .cook's own stacking context
+   (position: fixed, z-index 32), so a small z-index is enough to sit above the
+   step. */
+.cook-agent {
+  position: fixed; right: 18px; z-index: 5;
+  bottom: calc(104px + env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
 }
-.cook-talk:hover { border-color: var(--primary); }
-.cook-talk:active { transform: scale(.98); }
-.cook-talk.is-listening { background: var(--primary); border-color: var(--primary); color: var(--text-on-primary); }
-.cook-talk:focus-visible { outline: 3px solid var(--primary); outline-offset: 3px; }
+.cook-fab:focus-visible { outline: 3px solid var(--mint); outline-offset: 3px; }
 
 .cook-live {
   display: flex; align-items: center; gap: 10px;

@@ -65,6 +65,7 @@ import Stars from "../components/Stars.jsx";
 import { useChat } from "../components/Chat.jsx";
 import * as sq from "../lib/speechqueue.js";
 import "../styles/method.css";
+import "../styles/agent.css";     // the floating button's armed ring is defined there
 
 export default function CookMode() {
   const { k, finishCooking, setPref, saveRecipe } = useKitchen();
@@ -337,7 +338,20 @@ export default function CookMode() {
     if (!useServer || !ui.server.chat) return;
     voice.stopSpeaking();                                  // cut the chef off mid-sentence if needed
     sq.cancel();
-    try { listenRef.current?.stop(); } catch { /* it may already be finishing */ }
+    /* The waiting turn is thrown away, not stopped, and the session moves on.
+       stop() keeps whatever it had already recorded and still sends it to be
+       transcribed. So a tap made after the microphone had picked up any sound —
+       the room, the chef's own voice, the cook talking to someone — produced a
+       second transcript that landed a moment later, belonging to a turn that no
+       longer existed. It nulled listenRef out from under the listener this tap
+       had just started, then called hearNext() with no argument, which means
+       "waiting". That is the button lighting up and going straight back to
+       waiting for the name, and it is why it looked like a network problem: the
+       delay was the local transcription, not the internet. abort() throws that
+       audio away, and bumping the session makes any callback already in flight
+       a no-op through the guard hearNext already has. */
+    sessionRef.current++;
+    try { listenRef.current?.abort(); } catch { /* it may already be finishing */ }
     listenRef.current = null;
     if (!liveRef.current) {                                // tapping it also opens the microphone
       oneShotRef.current = true;
@@ -362,7 +376,9 @@ export default function CookMode() {
   function stopLive() {
     sessionRef.current++;
     liveRef.current = false; setLive(false); setVstate("");
-    try { listenRef.current?.stop(); } catch { /* */ }
+    // abort, not stop: the session counter above already discards whatever this
+    // turn would say, so transcribing it is work the local model does for nothing.
+    try { listenRef.current?.abort(); } catch { /* */ }
     listenRef.current = null;
     sq.cancel();                    // the queue holds the sentences still to come
     voice.stopSpeaking();           // this only ever stopped the one being said
@@ -424,6 +440,10 @@ export default function CookMode() {
     waiting: `Say “${wakeName}” — then “next”, “repeat”, or ask me anything.`,
     listening: "Listening…", thinking: `Thinking… say “${wakeName}, stop” to cancel`, speaking: "Speaking…",
   }[vstate];
+  /* The talk button wears the same states, and the same colours, as the
+     floating button on every other screen. Waiting for the name is "armed"
+     there, so it is armed here too. */
+  const talking = vstate === "listening" || vstate === "thinking" || vstate === "speaking";
   const bgAnim = k.prefs.bgAnim !== false;
   const mood = moodFor(recipe.cuisine);
 
@@ -466,14 +486,15 @@ export default function CookMode() {
       )}
 
       {useServer && ui.server.chat && (
-        <button className={"cook-talk is-" + (vstate === "listening" ? "listening" : live ? "live" : "idle")}
-                onClick={talkNow}
-                aria-label={`Talk without saying ${wakeName}`}>
-          <Icon name="mic" size={22} />
-          <span>{vstate === "listening" ? "Listening — say it now"
-            : vstate === "thinking" ? "Thinking…"
-            : `Talk without saying “${wakeName}”`}</span>
-        </button>
+        <div className="cook-agent">
+          <button className={"agent-fab cook-fab " + (talking ? "is-live is-" + vstate : "")
+                             + (!talking && live ? " is-armed" : "")}
+                  onClick={talkNow}
+                  aria-label={talking ? stateLabel : `Talk without saying ${wakeName}`}
+                  title={`Tap to talk — no need to say “${wakeName}”`}>
+            <Icon name="mic" size={26} />
+          </button>
+        </div>
       )}
 
       <div className="cook-stage">
