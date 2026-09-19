@@ -1,5 +1,0 @@
-torch
-chromadb
-datasets
-sentence-transformers
-tqdm
