@@ -1,6 +1,8 @@
 # Happy Bite (KitchenBuddy) — Windows
 
 > **On a Mac?** Follow [README.md](README.md) instead.
+> 
+> 📄 **Project Documentation:** [Technical Project Report](docs/KitchenBuddy-Project-Report.pdf) &nbsp;|&nbsp; 📊 [Oral Presentation Slides](docs/KitchenBuddy-Presentation-Slides.pdf)
 
 An offline-first kitchen assistant. It tracks what is in your kitchen and what is
 about to go off, suggests tonight's dinner from what you already have, and — with
