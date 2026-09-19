@@ -46,3 +46,7 @@ happy-bite/training/Modelfile
 
 # ChromaDB store written by data/kitchen-data-engine/ingest.py.
 kitchen_db/
+
+# ---------------------------------------------------------------- private logs & notes
+KitchenBuddy_Setup_Conversation_History.pdf
+RESTORED_CONVERSATION_HISTORY.md
